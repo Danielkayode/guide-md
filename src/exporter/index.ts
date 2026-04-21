@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import matter from "gray-matter";
 
-export type ExportTarget = "claude" | "cursor" | "windsurf" | "all";
+export type ExportTarget = "claude" | "cursor" | "windsurf" | "agents" | "copilot" | "aider" | "all";
 
 export interface ExportResult {
   target: string;
@@ -72,14 +72,170 @@ const WindsurfAdapter: ExporterAdapter = {
   }
 };
 
+const AgentsAdapter: ExporterAdapter = {
+  fileName: "AGENTS.md",
+  transform: (data, instructions) => {
+    const guardrails = data.guardrails;
+    const rules: string[] = [];
+    
+    if (guardrails?.no_hallucination) {
+      rules.push("- **No Hallucination**: Do not invent APIs, packages, or type signatures");
+    }
+    if (guardrails?.scope_creep_prevention) {
+      rules.push("- **Scope Creep Prevention**: Only modify files/functions explicitly referenced");
+    }
+    if (guardrails?.dry_run_on_destructive) {
+      rules.push("- **Destructive Operations**: Always preview destructive changes before executing");
+    }
+    if (guardrails?.cite_sources) {
+      rules.push("- **Cite Sources**: Include inline comments citing documentation for unfamiliar APIs");
+    }
+    if (data.code_style) {
+      rules.push(`- **Code Style**: Max line length ${data.code_style.max_line_length}, ${data.code_style.indentation} indentation, ${data.code_style.naming_convention} naming`);
+    }
+    if (data.error_protocol) {
+      rules.push(`- **Error Protocol**: ${data.error_protocol}`);
+    }
+    if (data.strict_typing) {
+      rules.push("- **Strict Typing**: Always use explicit types; never 'any' or untyped params");
+    }
+
+    return `# ${data.project}
+
+${data.description || ""}
+
+## Constraints
+
+- **Language**: ${Array.isArray(data.language) ? data.language.join(", ") : data.language}
+${data.runtime ? `- **Runtime**: ${data.runtime}` : ""}
+${data.framework ? `- **Framework**: ${Array.isArray(data.framework) ? data.framework.join(", ") : data.framework}` : ""}
+${data.testing?.required ? `- **Testing**: ${data.testing.framework} with ${data.testing.coverage_threshold}% coverage` : ""}
+${data.context?.architecture_pattern ? `- **Architecture**: ${data.context.architecture_pattern}` : ""}
+
+## Rules
+
+${rules.length > 0 ? rules.join("\n") : "- Follow standard best practices for the tech stack"}
+
+## Instructions
+
+${instructions.trim()}`;
+  }
+};
+
+const CopilotAdapter: ExporterAdapter = {
+  fileName: ".github/copilot-instructions.md",
+  transform: (data, instructions) => {
+    return `<!-- guidemd:generated -->
+# ${data.project}
+
+${data.description || ""}
+
+## Project Context
+
+- **Language**: ${Array.isArray(data.language) ? data.language.join(", ") : data.language}
+${data.runtime ? `- **Runtime**: ${data.runtime}` : ""}
+${data.framework ? `- **Framework**: ${Array.isArray(data.framework) ? data.framework.join(", ") : data.framework}` : ""}
+- **Strict Typing**: ${data.strict_typing ? "Enabled" : "Disabled"}
+- **Error Protocol**: ${data.error_protocol}
+
+${data.code_style ? `## Code Style
+
+- Max line length: ${data.code_style.max_line_length}
+- Indentation: ${data.code_style.indentation}
+- Naming convention: ${data.code_style.naming_convention}
+${data.code_style.max_function_lines ? `- Max function lines: ${data.code_style.max_function_lines}` : ""}
+` : ""}
+
+${data.guardrails ? `## Guardrails
+
+${data.guardrails.no_hallucination ? "- Do not invent APIs, packages, or type signatures\n" : ""}${data.guardrails.scope_creep_prevention ? "- Only modify files/functions explicitly referenced in the prompt\n" : ""}${data.guardrails.dry_run_on_destructive ? "- Preview destructive operations before executing\n" : ""}${data.guardrails.cite_sources ? "- Cite documentation sources when using unfamiliar APIs\n" : ""}` : ""}
+
+## AI Instructions
+
+${instructions.trim()}`;
+  }
+};
+
+const AiderAdapter: ExporterAdapter = {
+  fileName: ".aider.conf.yml",
+  transform: (data) => {
+    const config: Record<string, unknown> = {
+      // Map GUIDE.md fields to Aider's known YAML keys
+      auto_commits: data.guardrails?.dry_run_on_destructive === false, // inverse
+    };
+    
+    // Map ai_model_target to model if specified
+    if (data.ai_model_target) {
+      const model = Array.isArray(data.ai_model_target) ? data.ai_model_target[0] : data.ai_model_target;
+      config.model = model;
+    }
+    
+    // Build read list from entry_points
+    if (data.context?.entry_points && data.context.entry_points.length > 0) {
+      config.read = data.context.entry_points;
+    }
+    
+    // Add custom metadata as comments in the YAML content
+    const lines: string[] = [
+      "# Aider configuration generated from GUIDE.md",
+      "# https://aider.chat/docs/config/aider_conf.html"
+    ];
+    
+    // Add language hint as comment
+    if (data.language) {
+      const lang = Array.isArray(data.language) ? data.language[0] : data.language;
+      lines.push(`# Language: ${lang}`);
+    }
+    
+    // Add framework hint as comment
+    if (data.framework) {
+      const fw = Array.isArray(data.framework) ? data.framework.join(", ") : data.framework;
+      lines.push(`# Framework: ${fw}`);
+    }
+    
+    // Add code style as comment
+    if (data.code_style?.max_line_length) {
+      lines.push(`# Max line length: ${data.code_style.max_line_length}`);
+    }
+    
+    // Add error protocol as comment
+    if (data.error_protocol) {
+      lines.push(`# Error protocol: ${data.error_protocol}`);
+    }
+    
+    lines.push("");
+    
+    // Add actual YAML config
+    Object.entries(config).forEach(([key, value]) => {
+      if (Array.isArray(value)) {
+        lines.push(`${key}:`);
+        value.forEach(v => lines.push(`  - ${v}`));
+      } else if (typeof value === "boolean") {
+        lines.push(`${key}: ${value}`);
+      } else if (typeof value === "string") {
+        lines.push(`${key}: ${value}`);
+      }
+    });
+    
+    return lines.join("\n");
+  }
+};
+
 const ADAPTERS: Record<string, ExporterAdapter> = {
   claude: ClaudeAdapter,
   cursor: CursorAdapter,
-  windsurf: WindsurfAdapter
+  windsurf: WindsurfAdapter,
+  agents: AgentsAdapter,
+  copilot: CopilotAdapter,
+  aider: AiderAdapter
 };
 
 // ─── Core Logic ─────────────────────────────────────────────────────────────
 
+/**
+ * Exports GUIDE.md to various AI context formats.
+ * Creates necessary directories (e.g., .github/) for nested file paths.
+ */
 export function exportGuide(data: GuideMdFrontmatter, instructions: string, targetDir: string, target: ExportTarget): ExportResult[] {
   const results: ExportResult[] = [];
   const toExport = target === "all" ? (Object.keys(ADAPTERS) as ExportTarget[]) : [target];
@@ -92,6 +248,12 @@ export function exportGuide(data: GuideMdFrontmatter, instructions: string, targ
     const filePath = path.join(targetDir, adapter.fileName);
     
     try {
+      // Ensure parent directories exist for nested paths like .github/copilot-instructions.md
+      const parentDir = path.dirname(filePath);
+      if (!fs.existsSync(parentDir)) {
+        fs.mkdirSync(parentDir, { recursive: true });
+      }
+      
       fs.writeFileSync(filePath, content, "utf-8");
       results.push({ target: t, file: adapter.fileName, success: true });
     } catch (e) {

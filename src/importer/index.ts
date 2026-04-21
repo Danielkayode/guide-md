@@ -1,0 +1,471 @@
+import { GuideMdFrontmatter } from "../schema/index.js";
+import fs from "node:fs";
+import path from "node:path";
+import matter from "gray-matter";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+export interface ImportResult {
+  success: boolean;
+  data: GuideMdFrontmatter | null;
+  content: string;
+  warnings: string[];
+  unmappedFields: string[];
+  error?: string;
+}
+
+export type ImportSourceType = "claude" | "cursor" | "windsurf" | "agents";
+
+// ─── Source Detection ───────────────────────────────────────────────────────────
+
+/**
+ * Detects the type of AI context file based on filename.
+ */
+export function detectImportSource(filePath: string): ImportSourceType | null {
+  const basename = path.basename(filePath).toLowerCase();
+  
+  if (basename === "claude.md") return "claude";
+  if (basename === ".cursorrules") return "cursor";
+  if (basename === ".windsurfrules") return "windsurf";
+  if (basename === "agents.md") return "agents";
+  
+  return null;
+}
+
+// ─── Parsers ────────────────────────────────────────────────────────────────────
+
+/**
+ * Parses CLAUDE.md format (XML-style blocks).
+ */
+function parseClaudeFormat(content: string): { data: Partial<GuideMdFrontmatter>; instructions: string; unmapped: string[] } {
+  const data: Partial<GuideMdFrontmatter> = {};
+  const unmapped: string[] = [];
+  
+  // Extract context block
+  const contextMatch = content.match(/<context>([\s\S]*?)<\/context>/);
+  const contextContent = contextMatch?.[1];
+  if (contextContent) {
+    // Extract project name
+    const projectMatch = contextContent.match(/# Project:\s*(.+)/m);
+    const projectName = projectMatch?.[1];
+    if (projectName) {
+      data.project = projectName.trim();
+    }
+
+    // Extract description
+    const descMatch = contextContent.match(/# Project:[^\n]*\n+([^\n#].*?)(?=\n##|\n<|$)/s);
+    const description = descMatch?.[1];
+    if (description) {
+      data.description = description.trim();
+    }
+
+    // Extract tech stack
+    const techStackMatch = contextContent.match(/## Tech Stack([\s\S]*?)(?=##|<|$)/);
+    const techContent = techStackMatch?.[1];
+    if (techContent) {
+      const langMatch = techContent.match(/Language:\s*(.+)/);
+      if (langMatch?.[1]) {
+        const langs = langMatch[1].split(/,\s*/).map(l => l.trim().toLowerCase());
+        data.language = langs.length === 1 ? langs[0] as any : langs as any;
+      }
+
+      const runtimeMatch = techContent.match(/Runtime:\s*(.+)/);
+      if (runtimeMatch?.[1]) {
+        data.runtime = runtimeMatch[1].trim();
+      }
+
+      const frameworkMatch = techContent.match(/Framework:\s*(.+)/);
+      if (frameworkMatch?.[1]) {
+        const fw = frameworkMatch[1].split(/,\s*/).map(f => f.trim());
+        data.framework = fw.length === 1 ? fw[0] : fw;
+      }
+
+      const strictMatch = techContent.match(/Strict Typing:\s*(Enabled|Disabled)/);
+      if (strictMatch?.[1]) {
+        data.strict_typing = strictMatch[1] === "Enabled";
+      }
+    }
+  }
+  
+  // Extract rules block
+  const rulesMatch = content.match(/<rules>([\s\S]*?)<\/rules>/);
+  const rulesContent = rulesMatch?.[1];
+  if (rulesContent) {
+    // Extract error protocol
+    const errorProtocolMatch = rulesContent.match(/Error Protocol:\s*(verbose|silent|structured)/);
+    if (errorProtocolMatch?.[1]) {
+      data.error_protocol = errorProtocolMatch[1] as "verbose" | "silent" | "structured";
+    }
+
+    // Extract code style hints
+    const indentMatch = rulesContent.match(/Indentation:\s*(.+)/);
+    const namingMatch = rulesContent.match(/Naming:\s*(.+)/);
+    if (indentMatch?.[1] || namingMatch?.[1]) {
+      data.code_style = {
+        max_line_length: 100,
+        indentation: indentMatch?.[1]?.trim() ?? "2 spaces",
+        naming_convention: namingMatch?.[1] ? parseNamingConvention(namingMatch[1].trim()) as any : "camelCase",
+        prefer_immutability: false,
+        prefer_early_returns: true,
+      };
+    }
+
+    // Extract testing hints
+    const testingMatch = rulesContent.match(/## Testing\n([\s\S]*?)(?=##|<|$)/);
+    const testingContent = testingMatch?.[1];
+    if (testingContent) {
+      const frameworkMatch = testingContent.match(/Framework:\s*(.+)/);
+      const coverageMatch = testingContent.match(/Coverage:\s*(\d+)%/);
+
+      data.testing = {
+        required: true,
+        test_alongside_code: false,
+        framework: frameworkMatch?.[1],
+        coverage_threshold: coverageMatch?.[1] ? parseInt(coverageMatch[1], 10) : undefined,
+      };
+    }
+  }
+  
+  // Extract instructions (everything after rules or the main content)
+  const instructionsMatch = content.match(/## Instructions\n([\s\S]*?)(?=<\/rules>|$)/);
+  const instructions = instructionsMatch?.[1]?.trim() ?? "";
+  
+  // Default values
+  if (!data.guide_version) data.guide_version = "1.0.0";
+  if (!data.error_protocol) data.error_protocol = "verbose";
+  if (!data.language) {
+    data.language = "typescript";
+    unmapped.push("Could not detect language, defaulting to 'typescript'");
+  }
+  if (!data.project) {
+    data.project = "imported-project";
+    unmapped.push("Could not detect project name, using default");
+  }
+  
+  return { data, instructions, unmapped };
+}
+
+/**
+ * Parses .cursorrules format (YAML frontmatter + markdown).
+ */
+function parseCursorrulesFormat(content: string): { data: Partial<GuideMdFrontmatter>; instructions: string; unmapped: string[] } {
+  const unmapped: string[] = [];
+  
+  try {
+    const parsed = matter(content);
+    const frontmatter = parsed.data || {};
+    
+    const data: Partial<GuideMdFrontmatter> = {
+      guide_version: "1.0.0",
+      project: frontmatter.project || "imported-project",
+      language: "typescript",
+      strict_typing: true,
+      error_protocol: "verbose",
+    };
+    
+    // Map known cursorrules fields
+    if (frontmatter.context && Array.isArray(frontmatter.context)) {
+      data.context = {
+        entry_points: frontmatter.context,
+      };
+    }
+    
+    // Try to extract language from rules content
+    const rulesContent = parsed.content || "";
+    const langMatch = rulesContent.match(/@(typescript|javascript|python|rust|go|java)/i);
+    if (langMatch?.[1]) {
+      data.language = langMatch[1].toLowerCase() as any;
+    }
+    
+    // Extract any unmapped fields
+    const knownFields = ["project", "context", "rules"];
+    Object.keys(frontmatter).forEach(key => {
+      if (!knownFields.includes(key)) {
+        unmapped.push(`Frontmatter field '${key}' not auto-mapped to GUIDE.md schema`);
+      }
+    });
+    
+    return { data, instructions: rulesContent, unmapped };
+  } catch (e) {
+    // Fallback: treat entire content as markdown instructions
+    return {
+      data: {
+        guide_version: "1.0.0",
+        project: "imported-project",
+        language: "typescript",
+        strict_typing: true,
+        error_protocol: "verbose",
+      },
+      instructions: content,
+      unmapped: ["Failed to parse frontmatter, treating entire file as instructions"],
+    };
+  }
+}
+
+/**
+ * Parses .windsurfrules format (similar to CLAUDE.md).
+ */
+function parseWindsurfFormat(content: string): { data: Partial<GuideMdFrontmatter>; instructions: string; unmapped: string[] } {
+  // Windsurf format is similar to CLAUDE.md but wrapped in a header
+  // Strip the header and parse as CLAUDE.md
+  const withoutHeader = content.replace(/^# Windsurf Rules:[^\n]*\n+/, "");
+  return parseClaudeFormat(withoutHeader);
+}
+
+/**
+ * Parses AGENTS.md format (OpenAI agents style).
+ */
+function parseAgentsFormat(content: string): { data: Partial<GuideMdFrontmatter>; instructions: string; unmapped: string[] } {
+  const data: Partial<GuideMdFrontmatter> = {
+    guide_version: "1.0.0",
+    strict_typing: true,
+    error_protocol: "verbose",
+  };
+  const unmapped: string[] = [];
+  
+  // Extract project name from H1
+  const projectMatch = content.match(/^#\s+(.+)$/m);
+  const projectName = projectMatch?.[1];
+  if (projectName) {
+    data.project = projectName.trim();
+  } else {
+    data.project = "imported-project";
+  }
+
+  // Extract description (first paragraph after H1)
+  const descMatch = content.match(/^#[^\n]*\n+([^\n#].*?)(?=\n##|\n#|$)/s);
+  const description = descMatch?.[1];
+  if (description) {
+    data.description = description.trim();
+  }
+  
+  // Extract constraints from ## Constraints section
+  const constraintsMatch = content.match(/## Constraints([\s\S]*?)(?=##|$)/);
+  const constraints = constraintsMatch?.[1];
+  if (constraints) {
+    const langMatch = constraints.match(/Language:\s*(.+)/);
+    if (langMatch?.[1]) {
+      const langs = langMatch[1].split(/,\s*/).map(l => l.trim().toLowerCase());
+      data.language = langs.length === 1 ? langs[0] as any : langs as any;
+    }
+
+    const runtimeMatch = constraints.match(/Runtime:\s*(.+)/);
+    if (runtimeMatch?.[1]) {
+      data.runtime = runtimeMatch[1].trim();
+    }
+
+    const frameworkMatch = constraints.match(/Framework:\s*(.+)/);
+    if (frameworkMatch?.[1]) {
+      const fw = frameworkMatch[1].split(/,\s*/).map(f => f.trim());
+      data.framework = fw.length === 1 ? fw[0] : fw;
+    }
+
+    const testingMatch = constraints.match(/Testing:\s*(.+)\s+with\s+(\d+)%/);
+    if (testingMatch?.[1]) {
+      data.testing = {
+        required: true,
+        test_alongside_code: false,
+        framework: testingMatch[1].trim(),
+        coverage_threshold: testingMatch[2] ? parseInt(testingMatch[2], 10) : undefined,
+      };
+    }
+
+    const archMatch = constraints.match(/Architecture:\s*(.+)/);
+    if (archMatch?.[1]) {
+      data.context = {
+        architecture_pattern: archMatch[1].trim() as any,
+      };
+    }
+  }
+  
+  // Extract rules from ## Rules section
+  const rulesMatch = content.match(/## Rules([\s\S]*?)(?=##|$)/);
+  const rulesContent = rulesMatch?.[1];
+  if (rulesContent) {
+    const guardrails: any = {};
+    
+    if (rulesContent.includes("No Hallucination")) {
+      guardrails.no_hallucination = true;
+    }
+    if (rulesContent.includes("Scope Creep Prevention")) {
+      guardrails.scope_creep_prevention = true;
+    }
+    if (rulesContent.includes("Destructive")) {
+      guardrails.dry_run_on_destructive = true;
+    }
+    if (rulesContent.includes("Cite Sources")) {
+      guardrails.cite_sources = true;
+    }
+    if (rulesContent.includes("Code Style")) {
+      const styleMatch = rulesContent.match(/Code Style[^\n]*max line length (\d+)[^,]*,\s*(.+?) indentation/);
+      if (styleMatch?.[1] && styleMatch?.[2]) {
+        data.code_style = {
+          max_line_length: parseInt(styleMatch[1], 10),
+          indentation: styleMatch[2].trim(),
+          naming_convention: "camelCase",
+          prefer_immutability: false,
+          prefer_early_returns: true,
+        };
+      }
+    }
+    
+    if (Object.keys(guardrails).length > 0) {
+      data.guardrails = guardrails;
+    }
+  }
+  
+  // Extract instructions from ## Instructions section
+  const instructionsMatch = content.match(/## Instructions([\s\S]*?)$/);
+  const instructions = instructionsMatch?.[1]?.trim() ?? "";
+  
+  // Defaults
+  if (!data.language) {
+    data.language = "typescript";
+    unmapped.push("Could not detect language, defaulting to 'typescript'");
+  }
+  
+  return { data, instructions, unmapped };
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────────
+
+function parseNamingConvention(value: string): string {
+  const normalized = value.toLowerCase().replace(/[-_\s]/g, "");
+  const conventions: Record<string, string> = {
+    camelcase: "camelCase",
+    snakecase: "snake_case",
+    pascalcase: "PascalCase",
+    kebabcase: "kebab-case",
+    screamingsnakecase: "SCREAMING_SNAKE",
+  };
+  return conventions[normalized] || "camelCase";
+}
+
+// ─── Main Import Function ───────────────────────────────────────────────────────
+
+/**
+ * Imports an AI context file and converts it to GUIDE.md format.
+ * 
+ * @param filePath Path to the AI context file (CLAUDE.md, .cursorrules, .windsurfrules, AGENTS.md)
+ * @returns ImportResult containing the parsed data and any warnings
+ */
+export function importGuideFile(filePath: string): ImportResult {
+  const resolved = path.resolve(filePath);
+  
+  // Check file exists
+  if (!fs.existsSync(resolved)) {
+    return {
+      success: false,
+      data: null,
+      content: "",
+      warnings: [],
+      unmappedFields: [],
+      error: `File not found: ${resolved}`,
+    };
+  }
+  
+  // Detect source type
+  const sourceType = detectImportSource(resolved);
+  if (!sourceType) {
+    return {
+      success: false,
+      data: null,
+      content: "",
+      warnings: [],
+      unmappedFields: [],
+      error: `Unsupported file format. Supported: CLAUDE.md, .cursorrules, .windsurfrules, AGENTS.md`,
+    };
+  }
+  
+  // Read file
+  let content: string;
+  try {
+    content = fs.readFileSync(resolved, "utf-8");
+  } catch (err) {
+    return {
+      success: false,
+      data: null,
+      content: "",
+      warnings: [],
+      unmappedFields: [],
+      error: `Could not read file: ${err instanceof Error ? err.message : "Unknown error"}`,
+    };
+  }
+  
+  // Parse based on source type
+  let result: { data: Partial<GuideMdFrontmatter>; instructions: string; unmapped: string[] };
+  
+  switch (sourceType) {
+    case "claude":
+      result = parseClaudeFormat(content);
+      break;
+    case "cursor":
+      result = parseCursorrulesFormat(content);
+      break;
+    case "windsurf":
+      result = parseWindsurfFormat(content);
+      break;
+    case "agents":
+      result = parseAgentsFormat(content);
+      break;
+    default:
+      return {
+        success: false,
+        data: null,
+        content: "",
+        warnings: [],
+        unmappedFields: [],
+        error: `Parser not implemented for source type: ${sourceType}`,
+      };
+  }
+  
+  // Add source comment to instructions
+  const sourceName = path.basename(resolved);
+  const instructionsWithHeader = `# Imported from ${sourceName}\n\n## AI Instructions\n\n${result.instructions}`;
+  
+  // Build warnings
+  const warnings: string[] = [];
+  if (result.unmapped.length > 0) {
+    warnings.push(...result.unmapped.map(u => `⚠ ${u}`));
+  }
+  
+  // Validate required fields
+  if (!result.data.project) {
+    warnings.push("⚠ Project name not found, using default");
+  }
+  if (!result.data.language) {
+    warnings.push("⚠ Language not detected, defaulting to 'typescript'");
+  }
+  
+  return {
+    success: true,
+    data: result.data as GuideMdFrontmatter,
+    content: instructionsWithHeader,
+    warnings,
+    unmappedFields: result.unmapped,
+  };
+}
+
+/**
+ * Writes the imported GUIDE.md data to a file.
+ * 
+ * @param result The import result containing data and content
+ * @param outputPath Path to write the GUIDE.md file (default: "./GUIDE.md")
+ * @returns Success status and message
+ */
+export function writeImportedGuide(result: ImportResult, outputPath: string = "GUIDE.md"): { success: boolean; message: string } {
+  if (!result.success || !result.data) {
+    return { success: false, message: "Cannot write: import was not successful" };
+  }
+  
+  try {
+    const yamlContent = matter.stringify(result.content, result.data as Record<string, unknown>);
+    fs.writeFileSync(outputPath, yamlContent, "utf-8");
+    return { success: true, message: `Written to ${outputPath}` };
+  } catch (err) {
+    return { 
+      success: false, 
+      message: `Failed to write file: ${err instanceof Error ? err.message : "Unknown error"}` 
+    };
+  }
+}

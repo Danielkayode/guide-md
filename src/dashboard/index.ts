@@ -2,6 +2,7 @@ import { GuideMdFrontmatter } from "../schema/index.js";
 import chalk from "chalk";
 import fs from "node:fs";
 import path from "node:path";
+import { analyzeTokenBudgets, renderBudgetBar, generateBudgetWarnings, BudgetReport, TokenBudgetStatus } from "./budgets.js";
 
 export interface SectionStatus {
   name: string;
@@ -25,6 +26,7 @@ export interface HealthReport {
   };
   modelCompatibility: { model: string; rating: string }[];
   suggestions: string[];
+  tokenBudgets?: BudgetReport | undefined;
 }
 
 const NEGATIVE_CONSTRAINTS = ["no", "never", "don't", "prevent", "avoid", "stop", "restricted", "limited"];
@@ -152,6 +154,17 @@ export function generateHealthReport(data: GuideMdFrontmatter, content: string):
     { model: "Llama 3 (70B)", rating: score > 70 ? "Good" : "Fair" }
   ];
 
+  // 6. Token Budgets
+  const tokenBudgets = data.token_budgets ? analyzeTokenBudgets(data, content) : undefined;
+  if (tokenBudgets) {
+    const budgetWarnings = generateBudgetWarnings(tokenBudgets);
+    suggestions.push(...budgetWarnings);
+    
+    // Penalize score for budget overages
+    const overageCount = tokenBudgets.sections.filter(s => !s.withinBudget).length;
+    score -= overageCount * 10;
+  }
+
   return {
     score: Math.max(0, Math.min(100, Math.round(score))),
     tokenDensity: `${density} (${wordCount} words)`,
@@ -162,7 +175,8 @@ export function generateHealthReport(data: GuideMdFrontmatter, content: string):
     sectionScore,
     bestPractices: { ...guardrails, coverage },
     modelCompatibility: compatibility,
-    suggestions
+    suggestions,
+    tokenBudgets
   };
 }
 
@@ -213,5 +227,36 @@ export function printDashboard(report: HealthReport): void {
   if (report.suggestions.length > 0) {
     console.log(chalk.bold("\n💡 Suggestions:"));
     report.suggestions.forEach((s, i) => console.log(`   ${i + 1}. ${s}`));
+  }
+
+  // Token Budgets Section
+  if (report.tokenBudgets && report.tokenBudgets.sections.length > 0) {
+    console.log(chalk.bold("\n📊 Token Budgets:"));
+    console.log(chalk.dim("  ──────────────────────────"));
+    
+    for (const budget of report.tokenBudgets.sections) {
+      const bar = renderBudgetBar(budget.percentage);
+      const color = budget.withinBudget ? chalk.green : chalk.red;
+      const icon = budget.withinBudget ? "✔" : "✖";
+      
+      console.log(`   ${color(icon)} ${budget.section.padEnd(12)} ${bar} ${budget.used}/${budget.budget}`);
+      
+      if (!budget.withinBudget) {
+        console.log(chalk.red(`      ⚠ Overage: ${budget.overage} tokens`));
+      }
+    }
+    
+    // Show total if set
+    if (report.tokenBudgets.totalBudget) {
+      const totalPercent = (report.tokenBudgets.totalUsed / report.tokenBudgets.totalBudget) * 100;
+      const totalBar = renderBudgetBar(totalPercent);
+      const totalColor = report.tokenBudgets.withinTotalBudget ? chalk.green : chalk.red;
+      const totalIcon = report.tokenBudgets.withinTotalBudget ? "✔" : "✖";
+      
+      console.log(chalk.dim("  ──────────────────────────"));
+      console.log(`   ${totalColor(totalIcon)} ${"total".padEnd(12)} ${totalBar} ${report.tokenBudgets.totalUsed}/${report.tokenBudgets.totalBudget}`);
+    }
+    
+    console.log();
   }
 }

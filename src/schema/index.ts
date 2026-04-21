@@ -211,6 +211,16 @@ export const GuideMdSchema = z
       .array(z.string())
       .optional()
       .describe("Registry modules installed via 'guidemd add'. Used by sync to check for updates."),
+
+    // ── Token Budgets ─────────────────────────────────────────────────────────
+    token_budgets: z
+      .object({
+        guardrails: z.number().int().min(0).optional().describe("Max tokens for guardrails section"),
+        context: z.number().int().min(0).optional().describe("Max tokens for context section"),
+        total: z.number().int().min(0).optional().describe("Total token budget for entire GUIDE.md"),
+      })
+      .optional()
+      .describe("Token budgets per section for controlling AI context size"),
   })
   .strict(); // Disallows unknown keys — keeps the spec tight
 

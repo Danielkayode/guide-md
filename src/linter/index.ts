@@ -1,6 +1,7 @@
 import { GuideMdSchema, GuideMdFrontmatter } from "../schema/index.js";
 import { parseGuideFile } from "../parser/index.js";
 import { detectDrift, syncGuideFile, Drift, SyncResult } from "./sync.js";
+import { scanForSecrets, violationsToDiagnostics, SecretScanResult } from "./secrets.js";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -20,6 +21,11 @@ export interface LintResult {
   file: string;
   diagnostics: Diagnostic[];
   data: GuideMdFrontmatter | null;
+  secretScan?: SecretScanResult | undefined;
+}
+
+export interface LintOptions {
+  skipSecretScan?: boolean | undefined;
 }
 
 export interface FixResult {
@@ -104,11 +110,29 @@ const WARNING_RULES: WarningRule[] = [
 
 /**
  * Lints a GUIDE.md file: parses it, validates with Zod, and runs soft-warning rules.
+ * Also scans for secrets unless skipSecretScan is true.
  */
-export async function lintGuideFile(filePath: string): Promise<LintResult> {
+export async function lintGuideFile(filePath: string, options: LintOptions = {}): Promise<LintResult> {
   const diagnostics: Diagnostic[] = [];
 
-  // ── Step 1: Parse ─────────────────────────────────────────────────────────
+  // ── Step 1: Secret Scanning (before parsing) ───────────────────────────────
+  let secretScan: SecretScanResult | undefined;
+  
+  if (!options.skipSecretScan) {
+    try {
+      const rawContent = fs.readFileSync(filePath, "utf-8");
+      secretScan = scanForSecrets(rawContent, filePath);
+      
+      if (secretScan.detected) {
+        const secretDiagnostics = violationsToDiagnostics(secretScan);
+        diagnostics.push(...secretDiagnostics);
+      }
+    } catch {
+      // If we can't read the file for secret scanning, it will fail in parse anyway
+    }
+  }
+
+  // ── Step 2: Parse ─────────────────────────────────────────────────────────
   const parsed = parseGuideFile(filePath);
 
   if (!parsed.success) {
@@ -117,10 +141,10 @@ export async function lintGuideFile(filePath: string): Promise<LintResult> {
       field: "(file)",
       message: parsed.error ?? "Unknown parse error",
     });
-    return { valid: false, file: filePath, diagnostics, data: null };
+    return { valid: false, file: filePath, diagnostics, data: null, secretScan };
   }
 
-  // ── Step 2: Zod validation ────────────────────────────────────────────────
+  // ── Step 3: Zod validation ────────────────────────────────────────────────
   const result = GuideMdSchema.safeParse(parsed.data);
 
   if (!result.success) {
@@ -133,22 +157,26 @@ export async function lintGuideFile(filePath: string): Promise<LintResult> {
 
     // Still run warnings against raw data for partial guidance
     const warnings = await runWarnings(parsed.data, filePath);
+    const allDiagnostics = [...diagnostics, ...zodErrors, ...warnings];
     return {
       valid: false,
       file: filePath,
-      diagnostics: [...zodErrors, ...warnings],
+      diagnostics: allDiagnostics,
       data: null,
+      secretScan,
     };
   }
 
-  // ── Step 3: Soft warnings ─────────────────────────────────────────────────
+  // ── Step 4: Soft warnings ─────────────────────────────────────────────────
   const warnings = await runWarnings(result.data, filePath);
+  const allDiagnostics = [...diagnostics, ...warnings];
 
   return {
-    valid: warnings.filter((w) => w.severity === "error").length === 0,
+    valid: allDiagnostics.filter((w) => w.severity === "error").length === 0,
     file: filePath,
-    diagnostics: warnings,
+    diagnostics: allDiagnostics,
     data: result.data,
+    secretScan,
   };
 }
 

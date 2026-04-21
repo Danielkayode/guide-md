@@ -6,6 +6,7 @@ import { detectParadigm } from "../linter/sync.js";
 import { GuideMdSchema, GuideMdFrontmatter } from "../schema/index.js";
 import { parseGuideFile } from "../parser/index.js";
 import { exportGuide, generateBadge, ExportTarget, exportMcpManifest } from "../exporter/index.js";
+import { importGuideFile, writeImportedGuide } from "../importer/index.js";
 import { optimizeGuide } from "../optimizer/index.js";
 import { generateHealthReport, printDashboard } from "../dashboard/index.js";
 import { McpServer } from "../mcp/server.js";
@@ -18,6 +19,7 @@ import { runColdStartVerification } from "../verify/index.js";
 import { calculateContextDensity, formatDensityReport } from "../stats/index.js";
 import { detectFramework } from "../doctor/index.js";
 import { runProfile, generateJsonSchema } from "../profiler/index.js";
+import { watchGuideFile } from "../watcher/index.js";
 import fs from "node:fs";
 import path from "node:path";
 import matter from "gray-matter";
@@ -162,6 +164,7 @@ interface LintOptions {
   fix?: boolean;
   sync?: boolean;
   stats?: boolean;
+  skipSecretScan?: boolean;
 }
 
 interface InitOptions {
@@ -181,6 +184,7 @@ program
   .option("--fix", "Automatically fix fixable issues")
   .option("--sync", "Detect and sync drift between frontmatter and actual project files")
   .option("--stats", "Output Context Density Score comparing GUIDE.md to total repository size")
+  .option("--skip-secret-scan", "Skip scanning for secrets (not recommended)")
   .action(async (file: string = "GUIDE.md", opts: LintOptions) => {
     const target = path.resolve(file);
 
@@ -199,8 +203,14 @@ program
       process.exit(1);
     }
 
+    // Secret Scan Warning (before inheritance resolution)
+    if (!opts.skipSecretScan && !opts.json) {
+      // Secret scanning happens inside lintGuideFile now
+    }
+
     // Resolve Inheritance
-    const resolvedData = await resolveInheritance(parsed.data);
+    const fileDir = path.dirname(target);
+    const resolvedData = await resolveInheritance(parsed.data, fileDir);
 
     // 1. Handle Sync if requested
     if (opts.sync) {
@@ -258,7 +268,7 @@ program
       printDiagnostics(finalResult);
       exitSummary(finalResult);
     } else {
-      const result = await lintGuideFile(target);
+      const result = await lintGuideFile(target, { skipSecretScan: opts.skipSecretScan });
       // We should validate the resolved data instead of just the local data
       const schemaValidation = GuideMdSchema.safeParse(resolvedData);
       
@@ -742,8 +752,8 @@ interface ExportOptions {
 
 program
   .command("export [file]")
-  .description("Export GUIDE.md to other AI context formats (CLAUDE.md, .cursorrules, MCP manifest)")
-  .option("-t, --target <type>", "Target format (claude, cursor, windsurf, or all)", "all")
+  .description("Export GUIDE.md to other AI context formats (CLAUDE.md, .cursorrules, AGENTS.md, .github/copilot-instructions.md, .aider.conf.yml, MCP manifest)")
+  .option("-t, --target <type>", "Target format (claude, cursor, windsurf, agents, copilot, aider, or all)", "all")
   .option("-o, --out <dir>", "Output directory", ".")
   .option("-m, --manifest", "Generate MCP manifest.json for Model Context Protocol", false)
   .action((file: string = "GUIDE.md", opts: ExportOptions) => {
@@ -787,6 +797,74 @@ program
     }
   });
 
+// ── guidemd import ───────────────────────────────────────────────────────────
+interface ImportOptions {
+  out?: string;
+  dryRun?: boolean;
+}
+
+program
+  .command("import <file>")
+  .description("Reverse-parse an AI context file (CLAUDE.md, .cursorrules, .windsurfrules, AGENTS.md) into a GUIDE.md")
+  .option("-o, --out <path>", "Output path for the generated GUIDE.md", "GUIDE.md")
+  .option("--dry-run", "Print to stdout instead of writing file")
+  .action((file: string, opts: ImportOptions) => {
+    printBanner();
+    const sourceFile = path.resolve(file);
+    
+    console.log(`  ${ICONS.info} Importing: ${chalk.underline(sourceFile)}\n`);
+    
+    const result = importGuideFile(sourceFile);
+    
+    if (!result.success) {
+      console.log(`  ${ICONS.error} ${chalk.red(result.error)}`);
+      process.exit(1);
+    }
+    
+    // Print warnings about unmapped fields
+    if (result.warnings.length > 0) {
+      console.log(chalk.yellow.bold(`\n  Import Warnings (${result.warnings.length}):`));
+      result.warnings.forEach(w => {
+        console.log(`    ${ICONS.warning} ${w}`);
+      });
+    }
+    
+    // Print mapped fields summary
+    if (result.data) {
+      console.log(chalk.green.bold(`\n  Successfully mapped fields:`));
+      const fields = [
+        result.data.project && `  ${ICONS.success} project: ${result.data.project}`,
+        result.data.language && `  ${ICONS.success} language: ${Array.isArray(result.data.language) ? result.data.language.join(", ") : result.data.language}`,
+        result.data.runtime && `  ${ICONS.success} runtime: ${result.data.runtime}`,
+        result.data.framework && `  ${ICONS.success} framework: ${Array.isArray(result.data.framework) ? result.data.framework.join(", ") : result.data.framework}`,
+        result.data.description && `  ${ICONS.success} description: ${result.data.description.substring(0, 50)}...`,
+        result.data.code_style && `  ${ICONS.success} code_style: configured`,
+        result.data.guardrails && `  ${ICONS.success} guardrails: configured`,
+        result.data.testing && `  ${ICONS.success} testing: configured`,
+      ].filter(Boolean);
+      
+      fields.forEach(f => console.log(f));
+    }
+    
+    if (opts.dryRun) {
+      console.log(chalk.bold.cyan("\n  ── Generated GUIDE.md ──\n"));
+      const yamlContent = matter.stringify(result.content, result.data as Record<string, unknown>);
+      console.log(yamlContent);
+      return;
+    }
+    
+    const writeResult = writeImportedGuide(result, opts.out);
+    if (writeResult.success) {
+      console.log(`\n  ${ICONS.success} ${chalk.green(writeResult.message)}`);
+      if (result.warnings.length > 0) {
+        console.log(chalk.dim(`\n  Review the warnings above and adjust the generated GUIDE.md as needed.`));
+      }
+    } else {
+      console.log(`  ${ICONS.error} ${chalk.red(writeResult.message)}`);
+      process.exit(1);
+    }
+  });
+
 // ── guidemd badge ─────────────────────────────────────────────────────────────
 program
   .command("badge")
@@ -810,10 +888,15 @@ program
   });
 
 // ── guidemd ci ────────────────────────────────────────────────────────────────
+interface CiOptions {
+  write?: boolean;
+}
+
 program
   .command("ci")
   .description("Generate a GitHub Action workflow template")
-  .action(() => {
+  .option("--write", "Create .github/workflows/guidemd.yml directly")
+  .action((opts: CiOptions) => {
     const workflow = `name: AI Context Check (GUIDE.md)
 
 on:
@@ -821,12 +904,17 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
+    types: [ opened, synchronize, reopened ]
 
 jobs:
   lint-guide:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -836,24 +924,115 @@ jobs:
       - name: Install @guidemd/linter
         run: npm install -g @guidemd/linter
 
-      - name: Lint and Sync GUIDE.md
-        run: guidemd lint GUIDE.md --sync
-
-      - name: Check for changes
+      - name: Lint GUIDE.md
+        id: lint
         run: |
-          if [[ -n $(git status --porcelain) ]]; then
-            echo "GUIDE.md was out of sync and has been updated."
-            echo "Please run 'guidemd sync' locally and commit the changes."
-            exit 1
+          if ! guidemd lint GUIDE.md --json > lint-results.json 2>&1; then
+            echo "Lint failed"
+            echo "failed=true" >> $GITHUB_OUTPUT
+            cat lint-results.json
+          else
+            echo "failed=false" >> $GITHUB_OUTPUT
           fi
-`;
-    console.log(chalk.bold.cyan("\n# GitHub Action Template (.github/workflows/guidemd.yml)\n"));
-    console.log(chalk.dim("------------------------------------------------------------"));
-    console.log(workflow);
-    console.log(chalk.dim("------------------------------------------------------------\n"));
+        continue-on-error: true
 
-    const dest = path.join(process.cwd(), ".github", "workflows", "guidemd.yml");
-    console.log(`To save this automatically, run: ${chalk.cyan("mkdir -p .github/workflows && guidemd ci > .github/workflows/guidemd.yml")}\n`);
+      - name: Generate Info Dashboard
+        id: info
+        run: |
+          echo "## 📊 GUIDE.md AI-Readiness Report" > dashboard.md
+          echo "" >> dashboard.md
+          guidemd lint GUIDE.md --json > lint-output.json 2>/dev/null || true
+          if [ -f lint-output.json ]; then
+            valid=$(cat lint-output.json | grep -o '"valid":true' || echo "")
+            if [ -n "$valid" ]; then
+              echo "✅ **GUIDE.md is valid**" >> dashboard.md
+            else
+              echo "❌ **GUIDE.md has validation errors**" >> dashboard.md
+            fi
+            echo "" >> dashboard.md
+            echo "<details><summary>Lint Output</summary>" >> dashboard.md
+            echo "" >> dashboard.md
+            echo '\`\`\`json' >> dashboard.md
+            cat lint-output.json | head -50 >> dashboard.md
+            echo '\`\`\`' >> dashboard.md
+            echo "</details>" >> dashboard.md
+          fi
+          cat dashboard.md
+
+      - name: Post PR Comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const dashboard = fs.readFileSync('dashboard.md', 'utf8');
+            const body = dashboard + "\n\n---\n*Generated by @guidemd/linter*";
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const botComment = comments.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('GUIDE.md AI-Readiness Report')
+            );
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }
+
+      - name: Write to Job Summary
+        run: cat dashboard.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Fail if lint errors
+        if: steps.lint.outputs.failed == 'true'
+        run: |
+          echo "GUIDE.md validation failed. Please fix the errors above."
+          exit 1
+`;
+
+    if (opts.write) {
+      // Create the workflow file directly
+      const workflowDir = path.join(process.cwd(), ".github", "workflows");
+      const workflowPath = path.join(workflowDir, "guidemd.yml");
+      
+      try {
+        // Create directories if they don't exist
+        if (!fs.existsSync(workflowDir)) {
+          fs.mkdirSync(workflowDir, { recursive: true });
+        }
+        
+        fs.writeFileSync(workflowPath, workflow, "utf-8");
+        console.log(`${ICONS.success} ${chalk.green("Created")} ${chalk.underline(workflowPath)}`);
+        console.log(chalk.dim("\nThe workflow will:"));
+        console.log(chalk.dim("  • Run on every push to main/master and on PRs"));
+        console.log(chalk.dim("  • Lint GUIDE.md and fail if there are errors"));
+        console.log(chalk.dim("  • Post a dashboard comment on PRs"));
+        console.log(chalk.dim("  • Write results to $GITHUB_STEP_SUMMARY"));
+      } catch (err) {
+        console.log(`${ICONS.error} ${chalk.red("Failed to create workflow file")}`);
+        console.log(chalk.red(err instanceof Error ? err.message : "Unknown error"));
+        process.exit(1);
+      }
+    } else {
+      // Print to stdout
+      console.log(chalk.bold.cyan("\n# GitHub Action Template (.github/workflows/guidemd.yml)\n"));
+      console.log(chalk.dim("------------------------------------------------------------"));
+      console.log(workflow);
+      console.log(chalk.dim("------------------------------------------------------------\n"));
+      console.log(`To save this automatically, run: ${chalk.cyan("guidemd ci --write")}\n`);
+    }
   });
 
 // ── guidemd optimize ──────────────────────────────────────────────────────────
@@ -920,6 +1099,19 @@ program
 
     const report = generateHealthReport(result.data, parsed.content);
     printDashboard(report);
+  });
+
+// ── guidemd watch ─────────────────────────────────────────────────────────────
+interface WatchOptions {
+  skipSecretScan?: boolean;
+}
+
+program
+  .command("watch [file]")
+  .description("Watch mode: re-run lint on every save of GUIDE.md")
+  .option("--skip-secret-scan", "Skip scanning for secrets (not recommended)")
+  .action(async (file: string = "GUIDE.md", opts: WatchOptions) => {
+    await watchGuideFile(file, opts.skipSecretScan);
   });
 
 // ── guidemd install-hooks ─────────────────────────────────────────────────────
