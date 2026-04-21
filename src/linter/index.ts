@@ -1,0 +1,350 @@
+import { GuideMdSchema, GuideMdFrontmatter } from "../schema/index.js";
+import { parseGuideFile } from "../parser/index.js";
+import { detectDrift, syncGuideFile, Drift, SyncResult } from "./sync.js";
+import fs from "node:fs";
+import path from "node:path";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+export type DiagnosticSeverity = "error" | "warning";
+
+export interface Diagnostic {
+  severity: DiagnosticSeverity;
+  field: string;
+  message: string;
+  received?: unknown;
+}
+
+export interface LintResult {
+  valid: boolean;
+  file: string;
+  diagnostics: Diagnostic[];
+  data: GuideMdFrontmatter | null;
+}
+
+export interface FixResult {
+  fixed: boolean;
+  file: string;
+  diagnostics: Diagnostic[];
+  data: GuideMdFrontmatter | null;
+  appliedFixes: string[];
+}
+
+export type { Drift, SyncResult };
+export { syncGuideFile, detectDrift };
+
+interface WarningRule {
+  field: string;
+  check: (data: Record<string, unknown>, filePath: string) => boolean;
+  message: string;
+}
+
+// ─── Warning Rules ────────────────────────────────────────────────────────────
+// These are checks beyond Zod — soft best-practice recommendations.
+
+const WARNING_RULES: WarningRule[] = [
+  {
+    field: "description",
+    check: (data, filePath) => {
+      const desc = data.description;
+      return typeof desc === "string" && desc.length < 60;
+    },
+    message:
+      "description is quite short. Consider expanding it — AI models use this as primary project context.",
+  },
+  {
+    field: "guardrails.no_hallucination",
+    check: (data, filePath) => {
+      const guardrails = data.guardrails as Record<string, unknown> | undefined;
+      return guardrails?.no_hallucination === false;
+    },
+    message:
+      "Setting no_hallucination to false removes a critical AI guardrail. Are you sure?",
+  },
+  {
+    field: "context.off_limits",
+    check: (data, filePath) => {
+      const context = data.context as Record<string, unknown> | undefined;
+      return !context?.off_limits;
+    },
+    message:
+      'No off_limits paths defined. Consider restricting sensitive directories like ".env", "migrations/", or "secrets/".',
+  },
+  {
+    field: "ai_model_target",
+    check: (data, filePath) => !data.ai_model_target,
+    message:
+      "No ai_model_target specified. Pinning to a model ensures consistent behavior across different AI tools.",
+  },
+  {
+    field: "last_updated",
+    check: (data, filePath) => {
+      if (!data.last_updated) return true;
+      const updated = new Date(data.last_updated as string);
+      const now = new Date();
+      const diffDays = (now.getTime() - updated.getTime()) / (1000 * 60 * 60 * 24);
+      return diffDays > 180;
+    },
+    message:
+      "GUIDE.md appears stale (last updated >6 months ago). Outdated context can mislead AI agents.",
+  },
+  {
+    field: "file.length",
+    check: (data, filePath) => {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      const lines = content.split('\n').length;
+      return lines > 200;
+    },
+    message:
+      "GUIDE.md exceeds 200 lines. Research shows that concise files perform 4% better than verbose ones, which actually decrease performance.",
+  },
+];
+
+// ─── Core Linter ─────────────────────────────────────────────────────────────
+
+/**
+ * Lints a GUIDE.md file: parses it, validates with Zod, and runs soft-warning rules.
+ */
+export async function lintGuideFile(filePath: string): Promise<LintResult> {
+  const diagnostics: Diagnostic[] = [];
+
+  // ── Step 1: Parse ─────────────────────────────────────────────────────────
+  const parsed = parseGuideFile(filePath);
+
+  if (!parsed.success) {
+    diagnostics.push({
+      severity: "error",
+      field: "(file)",
+      message: parsed.error ?? "Unknown parse error",
+    });
+    return { valid: false, file: filePath, diagnostics, data: null };
+  }
+
+  // ── Step 2: Zod validation ────────────────────────────────────────────────
+  const result = GuideMdSchema.safeParse(parsed.data);
+
+  if (!result.success) {
+    const zodErrors: Diagnostic[] = result.error.errors.map((err) => ({
+      severity: "error" as const,
+      field: err.path.join(".") || "(root)",
+      message: err.message,
+      received: err.code === "invalid_type" ? err.received : undefined,
+    }));
+
+    // Still run warnings against raw data for partial guidance
+    const warnings = await runWarnings(parsed.data, filePath);
+    return {
+      valid: false,
+      file: filePath,
+      diagnostics: [...zodErrors, ...warnings],
+      data: null,
+    };
+  }
+
+  // ── Step 3: Soft warnings ─────────────────────────────────────────────────
+  const warnings = await runWarnings(result.data, filePath);
+
+  return {
+    valid: warnings.filter((w) => w.severity === "error").length === 0,
+    file: filePath,
+    diagnostics: warnings,
+    data: result.data,
+  };
+}
+
+/**
+ * Runs soft-warning rules against the data object.
+ */
+async function runWarnings(data: Record<string, unknown>, filePath: string): Promise<Diagnostic[]> {
+  const warnings = WARNING_RULES.filter((rule) => rule.check(data, filePath)).map((rule) => ({
+    severity: "warning" as const,
+    field: rule.field,
+    message: rule.message,
+  }));
+
+  // Add drift detection warnings
+  try {
+    const drifts = await detectDrift(data as unknown as GuideMdFrontmatter, filePath);
+    warnings.push(...drifts.map(d => ({
+      severity: "warning" as const,
+      field: d.field,
+      message: d.message
+    })));
+  } catch (e) {
+    // Ignore drift detection errors during raw data validation
+  }
+
+  return warnings;
+}
+
+// ─── Auto-Fix Functionality ──────────────────────────────────────────────────
+
+/**
+ * Attempts to auto-fix a GUIDE.md file by adding missing required fields with sensible defaults.
+ */
+export async function fixGuideFile(filePath: string): Promise<FixResult> {
+  const appliedFixes: string[] = [];
+
+  // ── Step 1: Parse ─────────────────────────────────────────────────────────
+  const parsed = parseGuideFile(filePath);
+
+  if (!parsed.success) {
+    return {
+      fixed: false,
+      file: filePath,
+      diagnostics: [{
+        severity: "error",
+        field: "(file)",
+        message: parsed.error ?? "Unknown parse error",
+      }],
+      data: null,
+      appliedFixes: [],
+    };
+  }
+
+  let data = { ...parsed.data };
+
+  // ── Step 2: Try to fix missing required fields ───────────────────────────
+  const fixes = applyFixes(data, filePath);
+  appliedFixes.push(...fixes.applied);
+
+  // Update data with fixes
+  data = { ...data, ...fixes.data };
+
+  // ── Step 3: Re-validate ───────────────────────────────────────────────────
+  const result = GuideMdSchema.safeParse(data);
+
+  if (!result.success) {
+    const zodErrors: Diagnostic[] = result.error.errors.map((err) => ({
+      severity: "error" as const,
+      field: err.path.join(".") || "(root)",
+      message: err.message,
+      received: err.code === "invalid_type" ? err.received : undefined,
+    }));
+
+    return {
+      fixed: false,
+      file: filePath,
+      diagnostics: zodErrors,
+      data: null,
+      appliedFixes,
+    };
+  }
+
+  // ── Step 4: Run warnings on fixed data ───────────────────────────────────
+  const warnings = await runWarnings(result.data, filePath);
+
+  return {
+    fixed: appliedFixes.length > 0,
+    file: filePath,
+    diagnostics: warnings,
+    data: result.data,
+    appliedFixes,
+  };
+}
+
+/**
+ * Applies fixes to the data object for missing required fields.
+ */
+function applyFixes(data: Record<string, unknown>, filePath: string): { data: Record<string, unknown>, applied: string[] } {
+  const fixes: Record<string, unknown> = {};
+  const applied: string[] = [];
+
+  // guide_version
+  if (!data.guide_version) {
+    fixes.guide_version = "1.0.0";
+    applied.push("Added guide_version: '1.0.0'");
+  }
+
+  // project
+  if (!data.project) {
+    const dirName = path.basename(path.dirname(filePath));
+    fixes.project = dirName === "." ? "my-project" : dirName;
+    applied.push(`Added project: '${fixes.project}'`);
+  }
+
+  // language
+  if (!data.language) {
+    const detected = detectLanguage(filePath);
+    fixes.language = detected;
+    applied.push(`Added language: '${detected}'`);
+  }
+
+  // strict_typing
+  if (data.strict_typing === undefined) {
+    fixes.strict_typing = true;
+    applied.push("Added strict_typing: true");
+  }
+
+  // error_protocol
+  if (!data.error_protocol) {
+    fixes.error_protocol = "verbose";
+    applied.push("Added error_protocol: 'verbose'");
+  }
+
+  // last_updated
+  if (!data.last_updated) {
+    fixes.last_updated = new Date().toISOString().split("T")[0];
+    applied.push(`Added last_updated: '${fixes.last_updated}'`);
+  }
+
+  return { data: fixes, applied };
+}
+
+/**
+ * Attempts to detect the primary language from the project structure.
+ * Exported for use in init command and other modules.
+ */
+export function detectLanguage(filePath: string): string {
+  const dir = path.dirname(filePath);
+
+  try {
+    const files = fs.readdirSync(dir, { recursive: true });
+
+    // Count file extensions
+    const extensions: Record<string, number> = {};
+    for (const file of files) {
+      if (typeof file === "string") {
+        const ext = path.extname(file);
+        extensions[ext] = (extensions[ext] || 0) + 1;
+      }
+    }
+
+    // Map extensions to languages
+    const extToLang: Record<string, string> = {
+      ".ts": "typescript",
+      ".tsx": "typescript",
+      ".js": "javascript",
+      ".jsx": "javascript",
+      ".py": "python",
+      ".rs": "rust",
+      ".go": "go",
+      ".java": "java",
+      ".kt": "kotlin",
+      ".swift": "swift",
+      ".cpp": "cpp",
+      ".c": "c",
+      ".cs": "csharp",
+      ".rb": "ruby",
+      ".php": "php",
+      ".scala": "scala",
+      ".hs": "haskell",
+      ".ex": "elixir",
+      ".zig": "zig",
+    };
+
+    let maxCount = 0;
+    let detectedLang = "typescript"; // default
+
+    for (const [ext, count] of Object.entries(extensions)) {
+      if (count > maxCount && extToLang[ext]) {
+        maxCount = count;
+        detectedLang = extToLang[ext];
+      }
+    }
+
+    return detectedLang;
+  } catch {
+    return "typescript"; // fallback
+  }
+}

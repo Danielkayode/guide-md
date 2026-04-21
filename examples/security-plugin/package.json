@@ -1,0 +1,29 @@
+{
+  "name": "guidemd-plugin-security-audit",
+  "version": "1.0.0",
+  "description": "Security audit plugin for @guidemd/linter - Hello World example",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "echo 'Run: npm run test in main project'"
+  },
+  "keywords": [
+    "guidemd",
+    "plugin",
+    "security",
+    "audit",
+    "owasp"
+  ],
+  "peerDependencies": {
+    "@guidemd/linter": ">=0.1.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.6",
+    "typescript": "^5.3.3"
+  },
+  "license": "MIT"
+}

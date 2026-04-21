@@ -1,0 +1,17 @@
+---
+language: typescript
+strict_typing: true
+code_style:
+  naming_convention: camelCase
+  prefer_immutability: true
+  prefer_early_returns: true
+guardrails:
+  no_hallucination: true
+  scope_creep_prevention: true
+version: "1.0.0"
+description: "Strict TypeScript coding standards with guardrails enabled."
+tags:
+  - typescript
+  - strict
+  - quality
+---

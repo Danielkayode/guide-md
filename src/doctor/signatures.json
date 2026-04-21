@@ -1,0 +1,211 @@
+{
+  "signatures": [
+    {
+      "name": "Tailwind CSS",
+      "type": "file",
+      "field": "framework",
+      "check": {
+        "files": ["tailwind.config.js", "tailwind.config.ts", "tailwind.config.cjs", "tailwind.config.mjs"]
+      }
+    },
+    {
+      "name": "Redux",
+      "type": "file",
+      "field": "state_management",
+      "check": {
+        "files": ["store.ts", "store.js", "redux/store.ts", "redux/store.js"],
+        "folders": ["redux", "slices", "store"]
+      }
+    },
+    {
+      "name": "Zustand",
+      "type": "dependency",
+      "field": "state_management",
+      "check": {
+        "packageKey": "dependencies",
+        "packageName": "zustand"
+      }
+    },
+    {
+      "name": "Jotai",
+      "type": "dependency",
+      "field": "state_management",
+      "check": {
+        "packageKey": "dependencies",
+        "packageName": "jotai"
+      }
+    },
+    {
+      "name": "Docker",
+      "type": "file",
+      "field": "context",
+      "check": {
+        "files": ["docker-compose.yml", "Dockerfile", "docker-compose.yaml", ".dockerignore"]
+      }
+    },
+    {
+      "name": "TypeScript",
+      "type": "file",
+      "field": "language",
+      "check": {
+        "files": ["tsconfig.json"]
+      }
+    },
+    {
+      "name": "React",
+      "type": "dependency",
+      "field": "framework",
+      "check": {
+        "packageKey": "dependencies",
+        "packageName": "react"
+      }
+    },
+    {
+      "name": "Next.js",
+      "type": "dependency",
+      "field": "framework",
+      "check": {
+        "packageKey": "dependencies",
+        "packageName": "next"
+      }
+    },
+    {
+      "name": "Vue",
+      "type": "dependency",
+      "field": "framework",
+      "check": {
+        "packageKey": "dependencies",
+        "packageName": "vue"
+      }
+    },
+    {
+      "name": "Svelte",
+      "type": "dependency",
+      "field": "framework",
+      "check": {
+        "packageKey": "dependencies",
+        "packageName": "svelte"
+      }
+    },
+    {
+      "name": "Express",
+      "type": "dependency",
+      "field": "framework",
+      "check": {
+        "packageKey": "dependencies",
+        "packageName": "express"
+      }
+    },
+    {
+      "name": "Fastify",
+      "type": "dependency",
+      "field": "framework",
+      "check": {
+        "packageKey": "dependencies",
+        "packageName": "fastify"
+      }
+    },
+    {
+      "name": "NestJS",
+      "type": "dependency",
+      "field": "framework",
+      "check": {
+        "packageKey": "dependencies",
+        "packageName": "@nestjs/core"
+      }
+    },
+    {
+      "name": "Vitest",
+      "type": "dependency",
+      "field": "testing.framework",
+      "check": {
+        "packageKey": "devDependencies",
+        "packageName": "vitest",
+        "configFiles": ["vitest.config.ts", "vitest.config.js", "vitest.config.mjs", "vitest.config.mts", "vitest.workspace.ts"]
+      }
+    },
+    {
+      "name": "Jest",
+      "type": "dependency",
+      "field": "testing.framework",
+      "check": {
+        "packageKey": "devDependencies",
+        "packageName": "jest",
+        "configFiles": ["jest.config.js", "jest.config.ts", "jest.config.json", "jest.config.mjs"]
+      }
+    },
+    {
+      "name": "Playwright",
+      "type": "dependency",
+      "field": "testing.framework",
+      "check": {
+        "packageKey": "devDependencies",
+        "packageName": "@playwright/test"
+      }
+    },
+    {
+      "name": "Cypress",
+      "type": "dependency",
+      "field": "testing.framework",
+      "check": {
+        "packageKey": "devDependencies",
+        "packageName": "cypress"
+      }
+    },
+    {
+      "name": "Prisma",
+      "type": "dependency",
+      "field": "context",
+      "check": {
+        "packageKey": "dependencies",
+        "packageName": "@prisma/client"
+      }
+    },
+    {
+      "name": "Drizzle",
+      "type": "dependency",
+      "field": "context",
+      "check": {
+        "packageKey": "dependencies",
+        "packageName": "drizzle-orm"
+      }
+    },
+    {
+      "name": "tRPC",
+      "type": "dependency",
+      "field": "context",
+      "check": {
+        "packageKey": "dependencies",
+        "packageName": "@trpc/server"
+      }
+    },
+    {
+      "name": "GraphQL",
+      "type": "dependency",
+      "field": "context",
+      "check": {
+        "packageKey": "dependencies",
+        "packageName": "graphql"
+      }
+    },
+    {
+      "name": "TailwindMerge",
+      "type": "dependency",
+      "field": "framework",
+      "check": {
+        "packageKey": "dependencies",
+        "packageName": "tailwind-merge"
+      }
+    }
+  ],
+  "keywordMap": {
+    "strict_typing": ["types", "interfaces", "ts", "typing", "strictly typed", "any", "unknown", "generics"],
+    "error_protocol": ["errors", "exceptions", "verbose", "silent", "protocol", "handling", "try/catch", "throw"],
+    "code_style.naming_convention": ["camelcase", "snake_case", "pascalcase", "kebab-case", "naming", "convention"],
+    "code_style.indentation": ["spaces", "tabs", "indent", "indentation", "2 spaces", "4 spaces"],
+    "guardrails.no_hallucination": ["hallucinate", "invent", "fake", "hallucination", "fabricate"],
+    "guardrails.scope_creep_prevention": ["scope", "creep", "prevent", "limit", "only modify"],
+    "testing.required": ["test", "testing", "vitest", "jest", "coverage", "spec", "unit test"],
+    "context.architecture_pattern": ["mvc", "clean", "hexagonal", "layered", "microservices", "monolith", "serverless", "event-driven"]
+  }
+}

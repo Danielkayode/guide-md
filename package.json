@@ -1,0 +1,44 @@
+{
+  "name": "@guidemd/linter",
+  "version": "0.1.0",
+  "description": "The official linter for GUIDE.md — the AI Context Interface standard",
+  "type": "module",
+  "main": "./dist/cli.js",
+  "bin": {
+    "guidemd": "./dist/cli.js"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "npm run build:bundle",
+    "build:bundle": "esbuild src/cli/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/cli.js --banner:js=\"#!/usr/bin/env node\" --external:esbuild",
+    "build:typecheck": "tsc --noEmit",
+    "dev": "tsx src/cli/index.ts",
+    "lint:self": "tsx src/cli/index.ts lint GUIDE.md",
+    "lint:check": "tsc --noEmit",
+    "test": "node --experimental-vm-modules node_modules/.bin/jest",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "gray-matter": "^4.0.3",
+    "zod": "^3.23.8",
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "zod-to-json-schema": "^3.23.0",
+    "es-module-lexer": "^1.5.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "@types/node": "^20.10.6",
+    "tsx": "^4.7.0",
+    "esbuild": "^0.20.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": ["guidemd", "ai-context", "llm", "mcp", "linter", "documentation"],
+  "license": "MIT"
+}

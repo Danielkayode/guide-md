@@ -1,0 +1,1234 @@
+#!/usr/bin/env node
+import { program } from "commander";
+import chalk from "chalk";
+import { lintGuideFile, fixGuideFile, LintResult, syncGuideFile, detectDrift, detectLanguage } from "../linter/index.js";
+import { detectParadigm } from "../linter/sync.js";
+import { GuideMdSchema, GuideMdFrontmatter } from "../schema/index.js";
+import { parseGuideFile } from "../parser/index.js";
+import { exportGuide, generateBadge, ExportTarget, exportMcpManifest } from "../exporter/index.js";
+import { optimizeGuide } from "../optimizer/index.js";
+import { generateHealthReport, printDashboard } from "../dashboard/index.js";
+import { McpServer } from "../mcp/server.js";
+import { installHook, uninstallHook, detectHookManager, HookManager } from "../guardian/hooks.js";
+import { resolveInheritance } from "../parser/resolver.js";
+import { generateReadme, backSyncFromReadme, generateSmartTemplate } from "../generator/index.js";
+import { listModules, searchModules, getModuleInfo, addModule, fetchModule } from "../registry/index.js";
+import { runDoctor } from "../doctor/index.js";
+import { runColdStartVerification } from "../verify/index.js";
+import { calculateContextDensity, formatDensityReport } from "../stats/index.js";
+import { detectFramework } from "../doctor/index.js";
+import { runProfile, generateJsonSchema } from "../profiler/index.js";
+import fs from "node:fs";
+import path from "node:path";
+import matter from "gray-matter";
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+const ICONS = {
+  error: chalk.red("✖"),
+  warning: chalk.yellow("⚠"),
+  success: chalk.green("✔"),
+  info: chalk.cyan("ℹ"),
+  sync: chalk.blue("🔄"),
+  export: chalk.magenta("📤"),
+  optimize: chalk.hex("#FFA500")("⚡"),
+  guardian: chalk.green("🛡️"),
+  mcp: chalk.cyan("🔌"),
+  readme: chalk.magenta("📝"),
+  registry: chalk.hex("#8A2BE2")("📦"),
+  doctor: chalk.magenta("🩺"),
+  profile: chalk.cyan("📊"),
+  stats: chalk.yellow("📈"),
+  verify: chalk.blue("🔍"),
+};
+
+function printBanner(): void {
+  console.log(chalk.bold.cyan("\n╔═══════════════════════════╗"));
+  console.log(chalk.bold.cyan("  ║     GUIDE.md  Linter      ║"));
+  console.log(chalk.bold.cyan("  ║  AI Context Interface     ║"));
+  console.log(chalk.bold.cyan("  ╚═══════════════════════════╝\n"));
+}
+
+function printDiagnostics(result: LintResult): void {
+  const errors = result.diagnostics.filter((d) => d.severity === "error");
+  const warnings = result.diagnostics.filter((d) => d.severity === "warning");
+
+  if (errors.length > 0) {
+    console.log(chalk.red.bold(`\nErrors (${errors.length})`));
+    console.log(chalk.red("  " + "─".repeat(40)));
+    errors.forEach((d) => {
+      console.log(`  ${ICONS.error} ${chalk.bold(d.field)}`);
+      console.log(`    ${chalk.dim("→")} ${d.message}`);
+      if (d.received !== undefined) {
+        console.log(`    ${chalk.dim("received:")} ${chalk.red(JSON.stringify(d.received))}`);
+      }
+    });
+  }
+
+  if (warnings.length > 0) {
+    console.log(chalk.yellow.bold(`\nWarnings (${warnings.length})`));
+    console.log(chalk.yellow("  " + "─".repeat(40)));
+    warnings.forEach((d) => {
+      console.log(`  ${ICONS.warning} ${chalk.bold(d.field)}`);
+      console.log(`    ${chalk.dim("→")} ${d.message}`);
+    });
+  }
+}
+
+function exitSummary(result: LintResult): void {
+  const errors = result.diagnostics.filter((d) => d.severity === "error").length;
+  const warnings = result.diagnostics.filter((d) => d.severity === "warning").length;
+
+  console.log("\n" + "─".repeat(44));
+  if (result.valid && errors === 0) {
+    console.log(
+      `  ${ICONS.success} ${chalk.green.bold("GUIDE.md is valid")}` +
+      (warnings > 0 ? chalk.yellow(` · ${warnings} warning(s)`) : "")
+    );
+    console.log(
+      chalk.dim(`
+This file is ready to be consumed by AI agents and MCP servers.
+`)
+    );
+    process.exit(0);
+  } else {
+    console.log(
+      `  ${ICONS.error} ${chalk.red.bold("Validation failed")} ` +
+      chalk.red(`· ${errors} error(s)`) +
+      (warnings > 0 ? chalk.yellow(`, ${warnings} warning(s)`) : "")
+    );
+    console.log(
+      chalk.dim(`
+Fix the errors above before using this GUIDE.md with AI agents.
+`)
+    );
+    process.exit(1);
+  }
+}
+
+// ─── INIT template ────────────────────────────────────────────────────────────
+const TEMPLATE = `---
+guide_version: "1.0.0"
+project: "my-project"
+description: "Describe what this project does in 1-2 sentences for your AI agent."
+language: typescript
+runtime: "node@22"
+framework: "express"
+strict_typing: true
+error_protocol: verbose
+ai_model_target:
+- "claude-sonnet-4-20250514"
+last_updated: "${new Date().toISOString().split("T")[0]}"
+code_style:
+  max_line_length: 100
+  indentation: "2 spaces"
+  naming_convention: camelCase
+  max_function_lines: 50
+  prefer_immutability: true
+  prefer_early_returns: true
+guardrails:
+  no_hallucination: true
+  scope_creep_prevention: true
+  cite_sources: false
+  dry_run_on_destructive: true
+  max_response_scope: function
+testing:
+  required: true
+  framework: "vitest"
+  coverage_threshold: 80
+  test_alongside_code: true
+context:
+  entry_points:
+  - "src/index.ts"
+  off_limits:
+  - ".env"
+  - ".env.*"
+  - "migrations/"
+  architecture_pattern: layered
+---
+# AI Instructions
+## Project Overview
+<!-- Describe the project purpose, domain context, and any business rules the AI must know -->
+## Domain Vocabulary
+<!-- Define key terms so the AI uses consistent naming -->
+## Non-Obvious Decisions
+<!-- Explain any architectural choices that might seem unusual -->
+## What NOT to do
+<!-- Anti-patterns specific to this codebase -->
+`;
+
+// ─── Commands ─────────────────────────────────────────────────────────────────
+interface LintOptions {
+  json?: boolean;
+  fix?: boolean;
+  sync?: boolean;
+  stats?: boolean;
+}
+
+interface InitOptions {
+  force?: boolean;
+}
+
+program
+  .name("guidemd")
+  .description("The official CLI for the GUIDE.md AI Context Interface standard")
+  .version("0.1.0");
+
+// ── guidemd lint ──────────────────────────────────────────────────────────────
+program
+  .command("lint [file]")
+  .description("Validate a GUIDE.md file against the spec (handles inheritance)")
+  .option("--json", "Output results as JSON (for CI/tooling integration)")
+  .option("--fix", "Automatically fix fixable issues")
+  .option("--sync", "Detect and sync drift between frontmatter and actual project files")
+  .option("--stats", "Output Context Density Score comparing GUIDE.md to total repository size")
+  .action(async (file: string = "GUIDE.md", opts: LintOptions) => {
+    const target = path.resolve(file);
+
+    if (!opts.json) {
+      printBanner();
+      console.log(`  ${ICONS.info} Linting: ${chalk.underline(target)}\n`);
+    }
+
+    const parsed = parseGuideFile(target);
+    if (!parsed.success) {
+      if (opts.json) {
+        console.log(JSON.stringify({ valid: false, error: parsed.error }));
+      } else {
+        console.log(`  ${ICONS.error} ${chalk.red(parsed.error)}`);
+      }
+      process.exit(1);
+    }
+
+    // Resolve Inheritance
+    const resolvedData = await resolveInheritance(parsed.data);
+
+    // 1. Handle Sync if requested
+    if (opts.sync) {
+      const syncResult = await syncGuideFile(resolvedData as GuideMdFrontmatter, target);
+      if (syncResult.synced) {
+        const originalContent = fs.readFileSync(target, "utf-8");
+        const matterParsed = matter(originalContent);
+        // We only write back non-inherited fields to the file?
+        // Actually, syncing usually updates the local file.
+        const newContent = matter.stringify(matterParsed.content, syncResult.data);
+        fs.writeFileSync(target, newContent, "utf-8");
+
+        if (!opts.json) {
+          console.log(`  ${ICONS.sync} ${chalk.blue("Synced drift:")}`);
+          syncResult.drifts.forEach((drift) => {
+            console.log(`    ${chalk.dim("•")} ${drift.message}`);
+          });
+          console.log();
+        }
+      }
+    }
+
+    // 2. Handle Fix if requested
+    if (opts.fix) {
+      const fixResult = await fixGuideFile(target);
+      // Note: fixGuideFile currently doesn't handle inheritance.
+      // For now, it fixes the local file.
+
+      if (opts.json) {
+        console.log(JSON.stringify(fixResult, null, 2));
+        process.exit(fixResult.diagnostics.filter((d) => d.severity === "error").length === 0 ? 0 : 1);
+        return;
+      }
+
+      if (fixResult.fixed && fixResult.data) {
+        const originalContent = fs.readFileSync(target, "utf-8");
+        const matterParsed = matter(originalContent);
+        const newContent = matter.stringify(matterParsed.content, fixResult.data);
+        fs.writeFileSync(target, newContent, "utf-8");
+
+        console.log(`  ${ICONS.success} ${chalk.green("Applied fixes:")}`);
+        fixResult.appliedFixes?.forEach((fix) => {
+          console.log(`    ${chalk.dim("•")} ${fix}`);
+        });
+        console.log();
+      }
+
+      const finalResult: LintResult = {
+        valid: fixResult.diagnostics.filter((d) => d.severity === "error").length === 0,
+        file: target,
+        diagnostics: fixResult.diagnostics,
+        data: fixResult.data,
+      };
+
+      printDiagnostics(finalResult);
+      exitSummary(finalResult);
+    } else {
+      const result = await lintGuideFile(target);
+      // We should validate the resolved data instead of just the local data
+      const schemaValidation = GuideMdSchema.safeParse(resolvedData);
+      
+      if (!schemaValidation.success) {
+        // Map Zod errors to our Diagnostic format
+        const diagnostics = schemaValidation.error.errors.map(err => ({
+          field: err.path.join("."),
+          message: err.message,
+          severity: "error" as const,
+          received: (err as any).received
+        }));
+        result.valid = false;
+        result.diagnostics.push(...diagnostics);
+      }
+
+      if (opts.json) {
+        let output: any = result;
+        if (opts.stats) {
+          const densityReport = calculateContextDensity(target, path.dirname(target));
+          output = { ...result, stats: densityReport };
+        }
+        console.log(JSON.stringify(output, null, 2));
+        process.exit(result.valid ? 0 : 1);
+        return;
+      }
+      printDiagnostics(result);
+
+      // Output stats if requested
+      if (opts.stats) {
+        const projectRoot = path.dirname(target);
+        const densityReport = calculateContextDensity(target, projectRoot);
+        console.log(chalk.bold.cyan("\n╔════════════════════════════════════════════════╗"));
+        console.log(chalk.bold.cyan("║     📈  Context Density Report                 ║"));
+        console.log(chalk.bold.cyan("╚════════════════════════════════════════════════╝"));
+        console.log(formatDensityReport(densityReport));
+        console.log("");
+      }
+
+      exitSummary(result);
+    }
+  });
+
+// ── guidemd back-sync-readme ──────────────────────────────────────────────────
+program
+  .command("back-sync-readme [file]")
+  .description("Back-port changes from README.md into GUIDE.md frontmatter (Bi-Directional)")
+  .option("-r, --readme <path>", "Path to README.md", "README.md")
+  .action((file: string = "GUIDE.md", opts: { readme: string }) => {
+    printBanner();
+    const guidePath = path.resolve(file);
+    const readmePath = path.resolve(opts.readme);
+
+    if (!fs.existsSync(readmePath)) {
+      console.log(`  ${ICONS.error} ${chalk.red(`README not found: ${readmePath}`)}`);
+      process.exit(1);
+    }
+
+    const parsedGuide = parseGuideFile(guidePath);
+    if (!parsedGuide.success) {
+      console.log(`  ${ICONS.error} ${chalk.red(parsedGuide.error)}`);
+      process.exit(1);
+    }
+
+    const readmeContent = fs.readFileSync(readmePath, "utf-8");
+    const newData = backSyncFromReadme(readmeContent, parsedGuide.data as any);
+
+    // Check if anything changed
+    const changed = JSON.stringify(newData) !== JSON.stringify(parsedGuide.data);
+
+    if (changed) {
+      const originalContent = fs.readFileSync(guidePath, "utf-8");
+      const matterParsed = matter(originalContent);
+      const newContent = matter.stringify(matterParsed.content, newData);
+      fs.writeFileSync(guidePath, newContent, "utf-8");
+
+      console.log(`  ${ICONS.success} ${chalk.green("Back-synced changes from README.md to GUIDE.md")}`);
+      console.log(chalk.dim("Fields updated: project, language, runtime (detected from Markdown)"));
+    } else {
+      console.log(`  ${ICONS.success} ${chalk.green("No changes detected in README.md to back-port.")}`);
+    }
+  });
+
+// ── guidemd verify ────────────────────────────────────────────────────────────
+interface VerifyOptions {
+  json?: boolean;
+}
+
+program
+  .command("verify [file]")
+  .description("Verify GUIDE.md provides enough context for AI cold start (Contract Verification)")
+  .option("--json", "Output results as JSON")
+  .action(async (file: string = "GUIDE.md", opts: VerifyOptions) => {
+    if (!opts.json) {
+      printBanner();
+    }
+
+    const targetFile = path.resolve(file);
+
+    if (!fs.existsSync(targetFile)) {
+      const msg = `GUIDE.md not found: ${targetFile}`;
+      if (opts.json) {
+        console.log(JSON.stringify({ valid: false, error: msg }));
+      } else {
+        console.log(`  ${ICONS.error} ${chalk.red(msg)}`);
+      }
+      process.exit(1);
+    }
+
+    if (!opts.json) {
+      console.log(`  ${ICONS.info} Running Cold Start Verification: ${chalk.underline(targetFile)}\n`);
+      console.log(chalk.dim("  Simulating AI agent reading GUIDE.md for the first time...\n"));
+    }
+
+    const parsed = parseGuideFile(targetFile);
+    if (!parsed.success) {
+      if (opts.json) {
+        console.log(JSON.stringify({ valid: false, error: parsed.error }));
+      } else {
+        console.log(`  ${ICONS.error} ${chalk.red(parsed.error)}`);
+      }
+      process.exit(1);
+    }
+
+    const schemaResult = GuideMdSchema.safeParse(parsed.data);
+    if (!schemaResult.success) {
+      const msg = "Cannot verify a file with schema errors. Run 'guidemd lint' first.";
+      if (opts.json) {
+        console.log(JSON.stringify({ valid: false, error: msg }));
+      } else {
+        console.log(`  ${ICONS.error} ${chalk.red(msg)}`);
+      }
+      process.exit(1);
+    }
+
+    const projectRoot = path.dirname(targetFile);
+    const report = await runColdStartVerification(schemaResult.data, parsed.content, projectRoot);
+
+    if (opts.json) {
+      console.log(JSON.stringify(report, null, 2));
+      process.exit(report.valid ? 0 : 1);
+      return;
+    }
+
+    // Print human-readable report
+    const statusColor = report.valid ? chalk.green : report.score >= 50 ? chalk.yellow : chalk.red;
+    const statusIcon = report.valid ? ICONS.success : report.score >= 50 ? ICONS.warning : ICONS.error;
+
+    console.log(chalk.bold.cyan("\n╔════════════════════════════════════════════════╗"));
+    console.log(chalk.bold.cyan("║     🔍  Cold Start Verification Report         ║"));
+    console.log(chalk.bold.cyan("╚════════════════════════════════════════════════╝\n"));
+
+    console.log(`${chalk.bold("Contract Score:")}  ${statusColor(report.score + "/100")}`);
+    console.log(`${statusIcon} ${statusColor(report.valid ? "PASS - AI can reconstruct project" : "FAIL - Insufficient context")}\n`);
+
+    // Reconstructability matrix
+    console.log(chalk.bold("  Reconstructability Matrix:"));
+    console.log(chalk.dim("  ──────────────────────────"));
+    const matrix = [
+      { name: "Dependency Tree", ok: report.canReconstruct.dependencyTree },
+      { name: "Build Scripts", ok: report.canReconstruct.buildScripts },
+      { name: "Entry Points", ok: report.canReconstruct.entryPoints },
+      { name: "Architecture", ok: report.canReconstruct.architecture },
+    ];
+    matrix.forEach(item => {
+      const icon = item.ok ? chalk.green("✔") : chalk.red("✖");
+      const status = item.ok ? chalk.green("Reconstructable") : chalk.red("Missing Context");
+      console.log(`    ${icon} ${item.name.padEnd(18)} ${status}`);
+    });
+
+    // Stats
+    console.log(chalk.bold("\n  Coverage Stats:"));
+    console.log(`    ${chalk.dim("•")} Required fields: ${report.stats.requiredFieldsPresent}/${report.stats.totalRequiredFields}`);
+    console.log(`    ${chalk.dim("•")} Critical sections: ${report.stats.criticalSectionsPresent}/${report.stats.totalCriticalSections}`);
+
+    // Findings
+    if (report.findings.length > 0) {
+      const critical = report.findings.filter(f => f.type === "critical");
+      const warnings = report.findings.filter(f => f.type === "warning");
+      const info = report.findings.filter(f => f.type === "info");
+
+      if (critical.length > 0) {
+        console.log(chalk.red.bold(`\n  Critical Issues (${critical.length}):`));
+        critical.forEach(f => {
+          console.log(`    ${ICONS.error} ${chalk.bold(f.category.toUpperCase())}: ${f.message}`);
+          console.log(`      ${chalk.dim("→")} ${chalk.green(f.recommendation)}`);
+        });
+      }
+
+      if (warnings.length > 0) {
+        console.log(chalk.yellow.bold(`\n  Warnings (${warnings.length}):`));
+        warnings.forEach(f => {
+          console.log(`    ${ICONS.warning} ${chalk.bold(f.category.toUpperCase())}: ${f.message}`);
+          console.log(`      ${chalk.dim("→")} ${f.recommendation}`);
+        });
+      }
+
+      if (info.length > 0 && report.score < 100) {
+        console.log(chalk.dim(`\n  Notes (${info.length}):`));
+        info.forEach(f => {
+          console.log(`    ${ICONS.info} ${f.message}`);
+        });
+      }
+    }
+
+    // Recommendations summary
+    if (report.recommendations.length > 0 && !report.valid) {
+      console.log(chalk.bold("\n  💡 Quick Fixes:"));
+      report.recommendations.slice(0, 3).forEach((rec, i) => {
+        console.log(`    ${i + 1}. ${rec}`);
+      });
+    }
+
+    console.log(chalk.dim("\n  A passing score means an AI agent can reconstruct your project\n  from GUIDE.md alone, without additional documentation.\n"));
+
+    process.exit(report.valid ? 0 : 1);
+  });
+
+// ── guidemd doctor ────────────────────────────────────────────────────────────
+program
+  .command("doctor [file]")
+  .description("Deep static analysis to find logic conflicts and architectural drift")
+  .action(async (file: string = "GUIDE.md") => {
+    printBanner();
+    const targetFile = path.resolve(file);
+    console.log(`  ${ICONS.doctor} Running Deep Analysis: ${chalk.underline(targetFile)}\n`);
+
+    const parsed = parseGuideFile(targetFile);
+    if (!parsed.success) {
+      console.log(`  ${ICONS.error} ${chalk.red(parsed.error)}`);
+      process.exit(1);
+    }
+
+    const schemaResult = GuideMdSchema.safeParse(parsed.data);
+    if (!schemaResult.success) {
+      console.log(`  ${ICONS.error} ${chalk.red("Cannot run doctor on a file with schema errors. Run 'guidemd lint' first.")}`);
+      process.exit(1);
+    }
+
+    const report = await runDoctor(schemaResult.data, parsed.content);
+
+    // Print Stats
+    console.log(chalk.bold(`  Scan Results:`));
+    console.log(`    ${chalk.dim("•")} Files scanned: ${report.stats.filesScanned}`);
+    console.log(`    ${chalk.dim("•")} Signatures detected: ${report.stats.signaturesFound.join(", ") || "None"}\n`);
+
+    if (report.issues.length === 0) {
+      console.log(`  ${ICONS.success} ${chalk.green("No architectural drift or logic conflicts found.")}`);
+      process.exit(0);
+    }
+
+    const errors = report.issues.filter(i => i.severity === "error");
+    const warnings = report.issues.filter(i => i.severity === "warning" || i.severity === ("low" as any));
+
+    if (errors.length > 0) {
+      console.log(chalk.red.bold(`  Critical Conflicts (${errors.length})`));
+      errors.forEach(i => {
+        console.log(`    ${ICONS.error} ${chalk.bold(i.field)}: ${i.message}`);
+        console.log(`      ${chalk.green("Fix:")} ${i.recommendation}`);
+      });
+      console.log();
+    }
+
+    if (warnings.length > 0) {
+      console.log(chalk.yellow.bold(`  Optimization Opportunities (${warnings.length})`));
+      warnings.forEach(i => {
+        const icon = i.type === "redundancy" ? ICONS.optimize : ICONS.warning;
+        console.log(`    ${icon} ${chalk.bold(i.field)}: ${i.message}`);
+        console.log(`      ${chalk.dim("→")} ${i.recommendation}`);
+      });
+      console.log();
+    }
+
+    process.exit(errors.length > 0 ? 1 : 0);
+  });
+
+// ── guidemd profile ───────────────────────────────────────────────────────────
+program
+  .command("profile [file]")
+  .description("AI Observability: Token density, Instruction/Code ratio, and Compatibility")
+  .option("--json-schema", "Export the project's GUIDE.md schema to JSON for IntelliSense")
+  .action((file: string = "GUIDE.md", opts: { jsonSchema?: boolean }) => {
+    if (opts.jsonSchema) {
+      const schema = generateJsonSchema();
+      fs.writeFileSync("guidemd.schema.json", schema, "utf-8");
+      console.log(`${ICONS.success} Created ${chalk.underline("guidemd.schema.json")}`);
+      console.log(chalk.dim("Add this to your VS Code settings to get real-time IntelliSense for GUIDE.md."));
+      return;
+    }
+
+    printBanner();
+    const targetFile = path.resolve(file);
+    console.log(`  ${ICONS.profile} Profiling: ${chalk.underline(targetFile)}\n`);
+
+    const parsed = parseGuideFile(targetFile);
+    if (!parsed.success) {
+      console.log(`  ${ICONS.error} ${chalk.red(parsed.error)}`);
+      process.exit(1);
+    }
+
+    const schemaResult = GuideMdSchema.safeParse(parsed.data);
+    if (!schemaResult.success) {
+      console.log(`  ${ICONS.error} ${chalk.red("Cannot profile a file with schema errors.")}`);
+      process.exit(1);
+    }
+
+    const report = runProfile(schemaResult.data, parsed.content);
+
+    // 1. Token Metrics
+    console.log(chalk.bold("  Token Metrics:"));
+    console.log(`    ${chalk.dim("•")} Estimated Total Tokens: ${chalk.cyan(report.totalTokens)}`);
+    console.log(`    ${chalk.dim("•")} Word Count (MD): ${parsed.content.split(/\s+/).length}\n`);
+
+    // 2. Compatibility Table
+    console.log(chalk.bold("  Model Compatibility:"));
+    console.table(report.compatibility.map(c => ({
+      Model: c.model,
+      "Usage %": c.usagePercentage.toFixed(2) + "%",
+      "Status": c.usagePercentage < 10 ? chalk.green("Safe") : c.usagePercentage < 50 ? chalk.yellow("Moderate") : chalk.red("Heavy")
+    })));
+    console.log();
+
+    // 3. Instruction/Code Ratio
+    console.log(chalk.bold("  Instruction-to-Code Density:"));
+    report.instructionRatio.forEach(r => {
+      const color = r.status === "balanced" ? chalk.green : chalk.yellow;
+      console.log(`    ${color("•")} ${chalk.bold(r.domain)}: ${r.instructionWords} words / ${r.codeUnits} units (${color(r.status)})`);
+    });
+    console.log();
+
+    // 4. Entropy (Fluff Detection)
+    console.log(chalk.bold("  Section Entropy (Higher is more efficient):"));
+    report.entropy.forEach(s => {
+      const bar = "█".repeat(Math.floor(s.score * 10)) + "░".repeat(10 - Math.floor(s.score * 10));
+      const color = s.score > 0.9 ? chalk.green : s.score > 0.7 ? chalk.yellow : chalk.red;
+      console.log(`    ${color(bar)} ${chalk.bold(s.section)} (${(s.score * 100).toFixed(0)}%)`);
+      if (s.recommendation) console.log(`      ${chalk.dim("→ " + s.recommendation)}`);
+    });
+    console.log();
+
+    // 5. Ghost Context
+    if (report.ghostContext.length > 0) {
+      console.log(chalk.red.bold("  Ghost Context Detected:"));
+      report.ghostContext.forEach(ep => {
+        console.log(`    ${ICONS.error} Entry point ${chalk.underline(ep)} does not exist in filesystem.`);
+      });
+      console.log();
+    }
+  });
+
+// ── guidemd sync ──────────────────────────────────────────────────────────────
+program
+  .command("sync [file]")
+  .description("Detect and sync drift between frontmatter and actual project files, and bi-directionally sync README.md markers")
+  .option("-r, --readme <path>", "Path to README.md for bi-directional sync", "README.md")
+  .action(async (file: string = "GUIDE.md", opts: { readme: string }) => {
+    printBanner();
+    const target = path.resolve(file);
+    console.log(`  ${ICONS.sync} Syncing: ${chalk.underline(target)}\n`);
+
+    const result = await lintGuideFile(target);
+    if (!result.data) {
+      console.log(`  ${ICONS.error} ${chalk.red("Cannot sync a file with schema errors.")}`);
+      process.exit(1);
+    }
+
+    // 1. Project drift sync
+    const syncResult = await syncGuideFile(result.data, target);
+    let fileSynced = false;
+
+    if (syncResult.synced) {
+      const originalContent = fs.readFileSync(target, "utf-8");
+      const parsed = matter(originalContent);
+      const newContent = matter.stringify(parsed.content, syncResult.data);
+      fs.writeFileSync(target, newContent, "utf-8");
+      fileSynced = true;
+
+      console.log(`  ${ICONS.success} ${chalk.green("Project drift sync complete!")}`);
+      syncResult.drifts.forEach((drift) => {
+        console.log(`    ${chalk.dim("•")} ${drift.message}`);
+      });
+    }
+
+    // 2. Bi-Directional README Sync (Parser-Back)
+    const readmePath = path.resolve(opts.readme);
+    if (fs.existsSync(readmePath)) {
+      const readmeContent = fs.readFileSync(readmePath, "utf-8");
+      const parsedGuide = parseGuideFile(target);
+      if (parsedGuide.success) {
+        const newData = backSyncFromReadme(readmeContent, parsedGuide.data as any);
+        const changed = JSON.stringify(newData) !== JSON.stringify(parsedGuide.data);
+
+        if (changed) {
+          const originalContent = fs.readFileSync(target, "utf-8");
+          const matterParsed = matter(originalContent);
+          const newContent = matter.stringify(matterParsed.content, newData);
+          fs.writeFileSync(target, newContent, "utf-8");
+          fileSynced = true;
+
+          console.log(`  ${ICONS.sync} ${chalk.blue("README back-sync complete!")}`);
+          console.log(chalk.dim("    Parsed changes from HTML comment markers and updated GUIDE.md frontmatter."));
+        }
+      }
+    }
+  }); // <--- Added the missing closure here
+
+// ── guidemd init ─────────────────────────────────────────────────────────────
+program
+  .command("init")
+  .description("Scaffold a new GUIDE.md in the current directory with smart stack detection")
+  .option("--force", "Overwrite an existing GUIDE.md")
+  .action(async (opts: InitOptions) => {
+    printBanner();
+    const dest = path.resolve("GUIDE.md");
+    if (fs.existsSync(dest) && !opts.force) {
+      console.log(
+        `  ${ICONS.error} ${chalk.red("GUIDE.md already exists.")} Use ${chalk.cyan("--force")} to overwrite.\n`
+      );
+      process.exit(1);
+    }
+
+    // ── SMART PRE-FLIGHT SCAN ────────────────────────────────────────────────
+    console.log(`  ${ICONS.info} Running pre-flight scan to detect project configuration...\n`);
+    
+    const projectRoot = process.cwd();
+    const detectedLang = detectLanguage(dest);
+    const detectedFramework = detectFramework(projectRoot);
+    const detectedParadigm = await detectParadigm(projectRoot);
+    
+    // Get project name from package.json or directory
+    let projectName = path.basename(projectRoot);
+    try {
+      const pkgPath = path.join(projectRoot, "package.json");
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+        if (pkg.name) projectName = pkg.name.replace(/^@[^/]+\//, "");
+      }
+    } catch {}
+    
+    // Generate smart template with detected values
+    const smartTemplate = generateSmartTemplate({
+      project: projectName,
+      language: detectedLang,
+      framework: detectedFramework,
+      paradigm: detectedParadigm,
+    });
+    
+    fs.writeFileSync(dest, smartTemplate, "utf-8");
+    
+    console.log(`  ${ICONS.success} ${chalk.green("Created GUIDE.md")}`);
+    
+    // Display detection results
+    console.log(chalk.dim(`\n  Detected configuration:`));
+    console.log(`    ${chalk.cyan("•")} Project: ${projectName}`);
+    console.log(`    ${chalk.cyan("•")} Language: ${detectedLang}`);
+    if (detectedFramework) {
+      console.log(`    ${chalk.cyan("•")} Framework: ${detectedFramework}`);
+    }
+    if (detectedParadigm) {
+      console.log(`    ${chalk.cyan("•")} Paradigm: ${detectedParadigm}`);
+    }
+    
+    console.log(
+      chalk.dim(`\nEdit the frontmatter, then run: ${chalk.cyan("guidemd lint")}
+`)
+    );
+  });
+
+program
+  .command("schema")
+  .description("Print the JSON Schema representation of the GUIDE.md spec")
+  .action(() => {
+    console.log(generateJsonSchema());
+  });
+
+// ── guidemd export ────────────────────────────────────────────────────────────
+interface ExportOptions {
+  target: ExportTarget;
+  out: string;
+  manifest?: boolean;
+}
+
+program
+  .command("export [file]")
+  .description("Export GUIDE.md to other AI context formats (CLAUDE.md, .cursorrules, MCP manifest)")
+  .option("-t, --target <type>", "Target format (claude, cursor, windsurf, or all)", "all")
+  .option("-o, --out <dir>", "Output directory", ".")
+  .option("-m, --manifest", "Generate MCP manifest.json for Model Context Protocol", false)
+  .action((file: string = "GUIDE.md", opts: ExportOptions) => {
+    printBanner();
+    const targetFile = path.resolve(file);
+    const outDir = path.resolve(opts.out);
+
+    console.log(`  ${ICONS.export} Exporting: ${chalk.underline(targetFile)} to ${chalk.bold(opts.target)}\n`);
+
+    const parsed = parseGuideFile(targetFile);
+    if (!parsed.success) {
+      console.log(`  ${ICONS.error} ${chalk.red(parsed.error)}`);
+      process.exit(1);
+    }
+
+    const result = GuideMdSchema.safeParse(parsed.data);
+    if (!result.success) {
+      console.log(`  ${ICONS.error} ${chalk.red("Cannot export a file with schema errors. Run 'guidemd lint' first.")}`);
+      process.exit(1);
+    }
+
+    const exportResults = exportGuide(result.data, parsed.content, outDir, opts.target);
+
+    exportResults.forEach(res => {
+      if (res.success) {
+        console.log(`  ${ICONS.success} Created ${chalk.green(res.file)}`);
+      } else {
+        console.log(`  ${ICONS.error} Failed to create ${chalk.red(res.file)}`);
+      }
+    });
+
+    // Export MCP manifest if requested
+    if (opts.manifest) {
+      const manifestResult = exportMcpManifest(result.data, parsed.content, outDir);
+      if (manifestResult.success) {
+        console.log(`  ${ICONS.mcp} Created ${chalk.cyan(manifestResult.file)}`);
+        console.log(chalk.dim("    MCP-compatible IDEs can now discover this project's AI Interface capabilities"));
+      } else {
+        console.log(`  ${ICONS.error} Failed to create ${chalk.red(manifestResult.file)}`);
+      }
+    }
+  });
+
+// ── guidemd badge ─────────────────────────────────────────────────────────────
+program
+  .command("badge")
+  .description("Generate a Markdown badge for your README (Dynamic Grading)")
+  .option("--file <path>", "GUIDE.md file path", "GUIDE.md")
+  .action((opts: { file: string }) => {
+    const targetFile = path.resolve(opts.file);
+    const parsed = parseGuideFile(targetFile);
+    
+    let grade = "A"; // Default
+    if (parsed.success) {
+      const result = GuideMdSchema.safeParse(parsed.data);
+      if (result.success) {
+        const report = generateHealthReport(result.data, parsed.content);
+        grade = report.score >= 90 ? "A" : report.score >= 80 ? "B" : report.score >= 70 ? "C" : "D";
+      }
+    }
+
+    console.log("\n" + generateBadge(grade) + "\n");
+    console.log(chalk.dim(`Badge generated for Grade ${grade}. Copy this into your README.md.\n`));
+  });
+
+// ── guidemd ci ────────────────────────────────────────────────────────────────
+program
+  .command("ci")
+  .description("Generate a GitHub Action workflow template")
+  .action(() => {
+    const workflow = `name: AI Context Check (GUIDE.md)
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  lint-guide:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install @guidemd/linter
+        run: npm install -g @guidemd/linter
+
+      - name: Lint and Sync GUIDE.md
+        run: guidemd lint GUIDE.md --sync
+
+      - name: Check for changes
+        run: |
+          if [[ -n $(git status --porcelain) ]]; then
+            echo "GUIDE.md was out of sync and has been updated."
+            echo "Please run 'guidemd sync' locally and commit the changes."
+            exit 1
+          fi
+`;
+    console.log(chalk.bold.cyan("\n# GitHub Action Template (.github/workflows/guidemd.yml)\n"));
+    console.log(chalk.dim("------------------------------------------------------------"));
+    console.log(workflow);
+    console.log(chalk.dim("------------------------------------------------------------\n"));
+
+    const dest = path.join(process.cwd(), ".github", "workflows", "guidemd.yml");
+    console.log(`To save this automatically, run: ${chalk.cyan("mkdir -p .github/workflows && guidemd ci > .github/workflows/guidemd.yml")}\n`);
+  });
+
+// ── guidemd optimize ──────────────────────────────────────────────────────────
+program
+  .command("optimize [file]")
+  .description("Analyze GUIDE.md for token efficiency and structural improvements")
+  .action((file: string = "GUIDE.md") => {
+    printBanner();
+    const targetFile = path.resolve(file);
+    console.log(`  ${ICONS.optimize} Analyzing: ${chalk.underline(targetFile)}\n`);
+
+    const parsed = parseGuideFile(targetFile);
+    if (!parsed.success) {
+      console.log(`  ${ICONS.error} ${chalk.red(parsed.error)}`);
+      process.exit(1);
+    }
+
+    const result = GuideMdSchema.safeParse(parsed.data);
+    if (!result.success) {
+      console.log(`  ${ICONS.error} ${chalk.red("Cannot optimize a file with schema errors.")}`);
+      process.exit(1);
+    }
+
+    const suggestions = optimizeGuide(result.data, parsed.content);
+
+    if (suggestions.length === 0) {
+      console.log(`  ${ICONS.success} ${chalk.green("Your GUIDE.md is already highly optimized!")}`);
+      return;
+    }
+
+    console.log(chalk.bold(`Found ${suggestions.length} optimization opportunities:`));
+    console.log(chalk.dim("─".repeat(50)));
+
+    suggestions.forEach((s, i) => {
+      const impactColor = s.impact === "high" ? chalk.red : s.impact === "medium" ? chalk.yellow : chalk.blue;
+      console.log(`\n  ${chalk.bold(`${i + 1}. [${s.type.toUpperCase()}]`)}`);
+      console.log(`     ${chalk.dim("Impact:")} ${impactColor(s.impact.toUpperCase())}`);
+      console.log(`     ${chalk.dim("Issue:")} ${s.message}`);
+      console.log(`     ${chalk.green("Recommendation:")} ${s.recommendation}`);
+    });
+
+    console.log("\n" + chalk.dim("Optimizing helps reduce token usage and keeps instructions clear for AI agents.\n"));
+  });
+
+// ── guidemd info ──────────────────────────────────────────────────────────────
+program
+  .command("info [file]")
+  .description("Display a high-level health report of the project's AI-readiness")
+  .action((file: string = "GUIDE.md") => {
+    printBanner();
+    const targetFile = path.resolve(file);
+
+    const parsed = parseGuideFile(targetFile);
+    if (!parsed.success) {
+      console.log(`  ${ICONS.error} ${chalk.red(parsed.error)}`);
+      process.exit(1);
+    }
+
+    const result = GuideMdSchema.safeParse(parsed.data);
+    if (!result.success) {
+      console.log(`  ${ICONS.error} ${chalk.red("Cannot generate info for a file with schema errors.")}`);
+      process.exit(1);
+    }
+
+    const report = generateHealthReport(result.data, parsed.content);
+    printDashboard(report);
+  });
+
+// ── guidemd install-hooks ─────────────────────────────────────────────────────
+interface InstallHooksOptions {
+  manager?: HookManager;
+  uninstall?: boolean;
+}
+
+program
+  .command("install-hooks")
+  .description("Install a git pre-commit hook to keep GUIDE.md in sync (The Guardian)")
+  .option("-m, --manager <type>", "Hook manager: husky, raw, or auto (default: auto)", "auto")
+  .option("--uninstall", "Remove the Guardian hook")
+  .action((opts: InstallHooksOptions) => {
+    printBanner();
+    
+    const manager = opts.manager || "auto";
+    
+    if (opts.uninstall) {
+      console.log(`  ${ICONS.guardian} Removing Guardian hook...\n`);
+      const result = uninstallHook(manager);
+      
+      if (result.success) {
+        console.log(`  ${ICONS.success} ${chalk.green(result.message)}`);
+      } else {
+        console.log(`  ${ICONS.warning} ${chalk.yellow(result.message)}`);
+      }
+      return;
+    }
+
+    console.log(`  ${ICONS.guardian} Installing Guardian (Git hook)...\n`);
+    
+    const detected = detectHookManager();
+    console.log(`  ${ICONS.info} Detected hook manager: ${chalk.cyan(detected)}`);
+    
+    const result = installHook(manager);
+    
+    if (result.success) {
+      console.log(`  ${ICONS.success} ${chalk.green(result.message)}`);
+      console.log(`  ${ICONS.info} Hook path: ${chalk.dim(result.hookPath)}`);
+      console.log(chalk.dim(`
+The Guardian will now:
+  • Run "guidemd lint --sync" before every commit
+  • Auto-stage GUIDE.md if it was updated during sync
+  • Block commits if GUIDE.md has validation errors
+`));
+    } else {
+      console.log(`  ${ICONS.error} ${chalk.red(result.message)}`);
+      process.exit(1);
+    }
+  });
+
+// ── guidemd serve (MCP) ────────────────────────────────────────────────────────
+interface ServeOptions {
+  port?: string;
+}
+
+program
+  .command("serve [file]")
+  .description("Launch a local MCP server to expose GUIDE.md as structured Tools and Resources")
+  .action((file: string = "GUIDE.md") => {
+    const targetFile = path.resolve(file);
+    
+    // Redirect all UI output to stderr so stdout remains clean for JSON-RPC
+    const log = (msg: string) => process.stderr.write(msg + "\n");
+
+    const banner = chalk.bold.cyan("\n╔═══════════════════════════╗\n") +
+                   chalk.bold.cyan("  ║     GUIDE.md  Linter      ║\n") +
+                   chalk.bold.cyan("  ║  AI Context Interface     ║\n") +
+                   chalk.bold.cyan("  ╚═══════════════════════════╝\n");
+    
+    log(banner);
+
+    const parsed = parseGuideFile(targetFile);
+    if (!parsed.success) {
+      log(`  ${ICONS.error} ${chalk.red(parsed.error)}`);
+      process.exit(1);
+    }
+
+    const schemaResult = GuideMdSchema.safeParse(parsed.data);
+    if (!schemaResult.success) {
+      log(`  ${ICONS.error} ${chalk.red("Cannot serve a file with schema errors. Run 'guidemd lint' first.")}`);
+      process.exit(1);
+    }
+
+    log(`  ${ICONS.mcp} Starting local MCP server...\n`);
+    log(`  ${ICONS.info} Exposing: ${chalk.underline(targetFile)}`);
+    log(`  ${ICONS.info} Protocol: JSON-RPC 2.0 (stdio)`);
+    log(`  ${ICONS.info} Tools: ${chalk.cyan("get_context, get_naming_conventions, get_architecture, get_guardrails, get_testing_requirements, get_runtime_info")}`);
+    log(`  ${ICONS.info} Resources: ${chalk.cyan("guidemd://frontmatter, guidemd://overview, guidemd://domain, guidemd://decisions, guidemd://antipatterns")}`);
+    log(chalk.dim("\n  Listening for requests from Claude Desktop, Cursor, etc.\n"));
+
+    const server = new McpServer(schemaResult.data, parsed.content);
+    server.start();
+  });
+
+// ── guidemd generate-readme ───────────────────────────────────────────────────
+interface GenerateReadmeOptions {
+  template?: string;
+  dryRun?: boolean;
+  badge?: boolean;
+}
+
+program
+  .command("generate-readme [file]")
+  .description("Generate a human-friendly README.md from your GUIDE.md frontmatter with optional AI-Readiness badge")
+  .option("-t, --template <path>", "Use a custom Handlebars-like template file")
+  .option("--dry-run", "Print to stdout instead of writing README.md")
+  .option("--badge", "Inject dynamically generated AI-Readiness badge from doctor score", true)
+  .action(async (file: string = "GUIDE.md", opts: GenerateReadmeOptions) => {
+    printBanner();
+    const targetFile = path.resolve(file);
+
+    console.log(`  ${ICONS.readme} Generating README from ${chalk.underline(targetFile)}\n`);
+
+    const parsed = parseGuideFile(targetFile);
+    if (!parsed.success) {
+      console.log(`  ${ICONS.error} ${chalk.red(parsed.error)}`);
+      process.exit(1);
+    }
+
+    const schemaResult = GuideMdSchema.safeParse(parsed.data);
+    if (!schemaResult.success) {
+      console.log(`  ${ICONS.error} ${chalk.red("Cannot generate README from a file with schema errors. Run 'guidemd lint' first.")}`);
+      process.exit(1);
+    }
+
+    // Calculate AI-Readiness grade from health report
+    let grade = "C";
+    if (opts.badge !== false) {
+      const healthReport = generateHealthReport(schemaResult.data, parsed.content);
+      grade = healthReport.score >= 90 ? "A" : healthReport.score >= 80 ? "B" : healthReport.score >= 70 ? "C" : healthReport.score >= 60 ? "D" : "F";
+      console.log(`  ${ICONS.info} AI-Readiness Grade: ${chalk.bold(grade)} (${healthReport.score}/100)\n`);
+    }
+
+    const result = generateReadme(schemaResult.data, parsed.content, opts.template, opts.badge !== false ? grade : undefined);
+    if (!result.success) {
+      console.log(`  ${ICONS.error} ${chalk.red(result.error)}`);
+      process.exit(1);
+    }
+
+    if (opts.dryRun) {
+      console.log(result.content);
+      return;
+    }
+
+    const readmePath = path.join(path.dirname(targetFile), "README.md");
+    fs.writeFileSync(readmePath, result.content, "utf-8");
+    console.log(`  ${ICONS.success} ${chalk.green("Created")} ${chalk.underline(readmePath)}`);
+    if (opts.badge !== false) {
+      console.log(`  ${ICONS.success} ${chalk.green("Injected AI-Readiness Badge:")} Grade ${chalk.bold(grade)}`);
+    }
+    console.log(chalk.dim(`\nThis README was auto-generated from your GUIDE.md. Re-run with ${chalk.cyan("--dry-run")} to preview changes.\n`));
+  });
+
+// ── guidemd add <module> ─────────────────────────────────────────────────────
+interface AddOptions {
+  force?: boolean;
+}
+
+program
+  .command("add <module>")
+  .description("Add a reusable Guide Module to your GUIDE.md (e.g., 'nextjs-security')")
+  .option("--force", "Overwrite conflicting fields instead of skipping")
+  .action(async (moduleName: string, opts: AddOptions) => {
+    printBanner();
+
+    console.log(`  ${ICONS.registry} Adding module: ${chalk.bold(moduleName)}\n`);
+
+    // First, parse existing GUIDE.md
+    const guidePath = path.resolve("GUIDE.md");
+    const parsed = parseGuideFile(guidePath);
+    if (!parsed.success) {
+      console.log(`  ${ICONS.error} ${chalk.red(parsed.error)}`);
+      process.exit(1);
+    }
+
+    // Validate current frontmatter
+    const schemaResult = GuideMdSchema.safeParse(parsed.data);
+    if (!schemaResult.success) {
+      console.log(`  ${ICONS.error} ${chalk.red("Cannot add modules to a file with schema errors. Run 'guidemd lint' first.")}`);
+      process.exit(1);
+    }
+
+    // Fetch module info first (for display)
+    const info = await getModuleInfo(moduleName);
+    if (!info.success || !info.module) {
+      console.log(`  ${ICONS.error} ${chalk.red(info.error || `Module "${moduleName}" not found.`)}`);
+      console.log(chalk.dim(`\nTry 'guidemd registry list' to see available modules.\n`));
+      process.exit(1);
+    }
+
+    if (info.module.description) {
+      console.log(`  ${ICONS.info} ${chalk.cyan(info.module.description)}\n`);
+    }
+
+    // Merge module into existing data
+    const addResult = await addModule(parsed.data, moduleName, opts.force ?? false);
+
+    if (!addResult.success) {
+      console.log(`  ${ICONS.error} ${chalk.red(addResult.error)}`);
+      process.exit(1);
+    }
+
+    // Validate merged data
+    const mergedSchemaResult = GuideMdSchema.safeParse(addResult.mergedData);
+    if (!mergedSchemaResult.success) {
+      console.log(`  ${ICONS.error} ${chalk.red("Module merged into invalid state. The module may conflict with your existing frontmatter.")}`);
+      const errors = mergedSchemaResult.error.errors.map((e) => `    ${e.path.join(".")}: ${e.message}`);
+      console.log(chalk.red(errors.join("\n")));
+      process.exit(1);
+    }
+
+    // Write updated GUIDE.md
+    const originalContent = fs.readFileSync(guidePath, "utf-8");
+    const matterParsed = matter(originalContent);
+    const newContent = matter.stringify(matterParsed.content, addResult.mergedData);
+    fs.writeFileSync(guidePath, newContent, "utf-8");
+
+    console.log(`  ${ICONS.success} ${chalk.green("Module added successfully!")}`);
+
+    if (addResult.conflicts.length > 0) {
+      console.log(chalk.yellow(`\n  ${ICONS.warning} ${addResult.conflicts.length} conflict(s) resolved:`));
+      addResult.conflicts.forEach((c) => {
+        const color = c.resolution === "overwritten" ? chalk.red : c.resolution === "merged" ? chalk.blue : chalk.yellow;
+        console.log(`    ${color("•")} ${c.field}: ${color(c.resolution)}`);
+      });
+    }
+
+    console.log(chalk.dim(`\nRun 'guidemd lint' to verify the merged frontmatter is valid.\n`));
+  });
+
+// ── guidemd registry ──────────────────────────────────────────────────────────
+program
+  .command("registry")
+  .description("Manage reusable Guide Modules (Context Hub)")
+  .addCommand(
+    program
+      .createCommand("list")
+      .description("List available modules in the registry")
+      .action(async () => {
+        printBanner();
+        console.log(`  ${ICONS.registry} Fetching available modules...\n`);
+
+        const result = await listModules();
+        if (!result.success || result.modules.length === 0) {
+          console.log(`  ${ICONS.warning} ${chalk.yellow("No modules found in registry.")}`);
+          console.log(chalk.dim(`\nThe registry may be empty, or the GitHub source (guidemd/registry) is unavailable.\n`));
+          return;
+        }
+
+        console.log(chalk.bold.cyan(`  Found ${result.modules.length} module(s):\n`));
+        result.modules.forEach((m) => {
+          console.log(`  ${chalk.bold(m.name)}`);
+          if (m.description) console.log(`    ${chalk.dim(m.description)}`);
+          if (m.tags.length > 0) console.log(`    ${chalk.dim("Tags:")} ${m.tags.join(", ")}`);
+          console.log();
+        });
+      })
+  )
+  .addCommand(
+    program
+      .createCommand("search <query>")
+      .description("Search modules by keyword")
+      .action(async (query: string) => {
+        printBanner();
+        console.log(`  ${ICONS.registry} Searching for "${chalk.cyan(query)}"...\n`);
+
+        const result = await searchModules(query);
+        if (!result.success || result.modules.length === 0) {
+          console.log(`  ${ICONS.warning} ${chalk.yellow(`No modules matching "${query}" found.`)}`);
+          return;
+        }
+
+        console.log(chalk.bold.cyan(`  Found ${result.modules.length} result(s):\n`));
+        result.modules.forEach((m) => {
+          console.log(`  ${chalk.bold(m.name)}`);
+          if (m.description) console.log(`    ${chalk.dim(m.description)}`);
+          console.log();
+        });
+      })
+  )
+  .addCommand(
+    program
+      .createCommand("info <module>")
+      .description("Show details about a specific module")
+      .action(async (moduleName: string) => {
+        printBanner();
+        console.log(`  ${ICONS.registry} Fetching info for ${chalk.bold(moduleName)}...\n`);
+
+        const info = await getModuleInfo(moduleName);
+        if (!info.success || !info.module) {
+          console.log(`  ${ICONS.error} ${chalk.red(info.error || `Module "${moduleName}" not found.`)}`);
+          process.exit(1);
+        }
+
+        const m = info.module;
+        console.log(chalk.bold.cyan(`  ${m.name}\n`));
+        if (m.description) console.log(`  ${chalk.dim("Description:")} ${m.description}`);
+        if (m.version) console.log(`  ${chalk.dim("Version:")} ${m.version}`);
+        if (m.tags && m.tags.length > 0) console.log(`  ${chalk.dim("Tags:")} ${m.tags.join(", ")}`);
+        console.log(`\n  ${chalk.dim("Content:")}`);
+        console.log(chalk.dim(JSON.stringify(m.content, null, 2).split("\n").map((l) => "  " + l).join("\n")));
+        console.log();
+      })
+  );
+
+program.parse();
+
+function description(arg0: string) {
+  throw new Error("Function not implemented.");
+}
