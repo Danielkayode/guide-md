@@ -136,7 +136,7 @@ ${data.description || ""}
 ${data.runtime ? `- **Runtime**: ${data.runtime}` : ""}
 ${data.framework ? `- **Framework**: ${Array.isArray(data.framework) ? data.framework.join(", ") : data.framework}` : ""}
 - **Strict Typing**: ${data.strict_typing ? "Enabled" : "Disabled"}
-- **Error Protocol**: ${data.error_protocol}
+- **Error Protocol**: ${data.error_protocol || "verbose"}
 
 ${data.code_style ? `## Code Style
 
@@ -155,6 +155,33 @@ ${data.guardrails.no_hallucination ? "- Do not invent APIs, packages, or type si
 ${instructions.trim()}`;
   }
 };
+
+/**
+ * Escapes a string value for safe YAML emission.
+ * Quotes strings that contain special characters or start with YAML indicators.
+ */
+function escapeYamlString(value: string): string {
+  // Check if string needs quoting
+  const needsQuoting = /[:#\"'{[\],>&*!|]/.test(value) ||
+    value.startsWith("-") ||
+    value.startsWith("?") ||
+    value.startsWith("%") ||
+    /^(true|false|null|yes|no|on|off)$/i.test(value) ||
+    /\n/.test(value) ||
+    value.trim() !== value;
+  
+  if (!needsQuoting) {
+    return value;
+  }
+  
+  // Use double quotes and escape special characters
+  return '"' + value
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t") + '"';
+}
 
 const AiderAdapter: ExporterAdapter = {
   fileName: ".aider.conf.yml",
@@ -205,14 +232,22 @@ const AiderAdapter: ExporterAdapter = {
     
     lines.push("");
     
-    // Add actual YAML config
+    // Add actual YAML config with proper escaping
     Object.entries(config).forEach(([key, value]) => {
       if (Array.isArray(value)) {
         lines.push(`${key}:`);
-        value.forEach(v => lines.push(`  - ${v}`));
+        value.forEach(v => {
+          if (typeof v === "string") {
+            lines.push(`  - ${escapeYamlString(v)}`);
+          } else {
+            lines.push(`  - ${v}`);
+          }
+        });
       } else if (typeof value === "boolean") {
         lines.push(`${key}: ${value}`);
       } else if (typeof value === "string") {
+        lines.push(`${key}: ${escapeYamlString(value)}`);
+      } else if (typeof value === "number") {
         lines.push(`${key}: ${value}`);
       }
     });

@@ -153,8 +153,9 @@ export function scanForSecrets(content: string, filePath: string): SecretScanRes
 export function violationsToDiagnostics(result: SecretScanResult): Diagnostic[] {
   return result.violations.map(v => ({
     severity: "error" as const,
+    source: "secret-scan" as const,
     field: v.key ? String(v.key) : "(secret)",
-    message: `Potential secret detected (${v.pattern}) at line ${v.line}: ${String(v.maskedValue)}`,
+    message: `Potential secret detected: ${String(v.maskedValue)}`,
     received: "REDACTED_FOR_SECURITY",
   }));
 }

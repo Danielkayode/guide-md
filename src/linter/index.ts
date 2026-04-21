@@ -8,9 +8,11 @@ import path from "node:path";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type DiagnosticSeverity = "error" | "warning";
+export type DiagnosticSource = "schema" | "warning" | "secret-scan";
 
 export interface Diagnostic {
   severity: DiagnosticSeverity;
+  source: DiagnosticSource;
   field: string;
   message: string;
   received?: unknown;
@@ -138,6 +140,7 @@ export async function lintGuideFile(filePath: string, options: LintOptions = {})
   if (!parsed.success) {
     diagnostics.push({
       severity: "error",
+      source: "schema",
       field: "(file)",
       message: parsed.error ?? "Unknown parse error",
     });
@@ -150,6 +153,7 @@ export async function lintGuideFile(filePath: string, options: LintOptions = {})
   if (!result.success) {
     const zodErrors: Diagnostic[] = result.error.errors.map((err) => ({
       severity: "error" as const,
+      source: "schema" as const,
       field: err.path.join(".") || "(root)",
       message: err.message,
       received: err.code === "invalid_type" ? err.received : undefined,
@@ -186,6 +190,7 @@ export async function lintGuideFile(filePath: string, options: LintOptions = {})
 async function runWarnings(data: Record<string, unknown>, filePath: string): Promise<Diagnostic[]> {
   const warnings = WARNING_RULES.filter((rule) => rule.check(data, filePath)).map((rule) => ({
     severity: "warning" as const,
+    source: "warning" as const,
     field: rule.field,
     message: rule.message,
   }));
@@ -195,6 +200,7 @@ async function runWarnings(data: Record<string, unknown>, filePath: string): Pro
     const drifts = await detectDrift(data as unknown as GuideMdFrontmatter, filePath);
     warnings.push(...drifts.map(d => ({
       severity: "warning" as const,
+      source: "warning" as const,
       field: d.field,
       message: d.message
     })));
@@ -222,6 +228,7 @@ export async function fixGuideFile(filePath: string): Promise<FixResult> {
       file: filePath,
       diagnostics: [{
         severity: "error",
+        source: "schema",
         field: "(file)",
         message: parsed.error ?? "Unknown parse error",
       }],
@@ -245,6 +252,7 @@ export async function fixGuideFile(filePath: string): Promise<FixResult> {
   if (!result.success) {
     const zodErrors: Diagnostic[] = result.error.errors.map((err) => ({
       severity: "error" as const,
+      source: "schema" as const,
       field: err.path.join(".") || "(root)",
       message: err.message,
       received: err.code === "invalid_type" ? err.received : undefined,

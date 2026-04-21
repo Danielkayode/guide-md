@@ -1,4 +1,4 @@
-import { GuideMdFrontmatter } from "../schema/index.js";
+import { GuideMdFrontmatter, GuideMdSchema } from "../schema/index.js";
 import fs from "node:fs";
 import path from "node:path";
 import matter from "gray-matter";
@@ -435,6 +435,13 @@ export function importGuideFile(filePath: string): ImportResult {
   }
   if (!result.data.language) {
     warnings.push("⚠ Language not detected, defaulting to 'typescript'");
+  }
+  
+  // Validate the imported data against the schema
+  const validationResult = GuideMdSchema.safeParse(result.data);
+  if (!validationResult.success) {
+    const schemaErrors = validationResult.error.errors.map(e => `${e.path.join('.')}: ${e.message}`);
+    warnings.push(`⚠ Schema validation failed: ${schemaErrors.join(', ')}`);
   }
   
   return {

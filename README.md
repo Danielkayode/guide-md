@@ -14,6 +14,8 @@
 
 ## 🛠️ Installation
 
+**Requirements:** Node.js 18 or higher
+
 ```bash
 npm install -g @guidemd/linter
 ```

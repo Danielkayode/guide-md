@@ -10,7 +10,30 @@ export interface CircularDependencyError extends Error {
   chain: string[];
 }
 
+export interface ResolutionError {
+  extends: string;
+  message: string;
+}
+
+export interface ResolveResult {
+  data: Record<string, unknown>;
+  errors: ResolutionError[];
+}
+
 // ─── Resolution ─────────────────────────────────────────────────────────────────
+
+/**
+ * Normalizes an extends identifier for consistent circular detection.
+ * Converts relative paths to absolute paths where possible.
+ */
+function normalizeExtendsId(ext: string, basePath: string): string {
+  // Normalize local file paths to absolute paths
+  if (ext.startsWith("./") || ext.startsWith("../")) {
+    return path.resolve(basePath, ext).toLowerCase();
+  }
+  // Normalize registry names and URLs to lowercase
+  return ext.toLowerCase();
+}
 
 /**
  * Recursively resolves the 'extends' field in the frontmatter.
@@ -25,7 +48,7 @@ export interface CircularDependencyError extends Error {
  * @param basePath The base directory for resolving relative file paths
  * @param visited Set of already visited extends to detect circular dependencies
  * @param chain Array tracking the current extends chain for error reporting
- * @returns The merged data with all extends resolved
+ * @returns ResolveResult with merged data and any resolution errors
  * @throws CircularDependencyError if a circular extends chain is detected
  */
 export async function resolveInheritance(
@@ -33,9 +56,9 @@ export async function resolveInheritance(
   basePath: string = process.cwd(),
   visited: Set<string> = new Set(),
   chain: string[] = []
-): Promise<Record<string, unknown>> {
+): Promise<ResolveResult> {
   if (!localData.extends) {
-    return localData;
+    return { data: localData, errors: [] };
   }
 
   const extensions = Array.isArray(localData.extends)
@@ -43,11 +66,15 @@ export async function resolveInheritance(
     : [localData.extends];
 
   let mergedData = { ...localData };
+  const errors: ResolutionError[] = [];
 
   // Resolve extensions in reverse order so that earlier ones take precedence
   // If you have [base, middleware], middleware overrides base, and local overrides both.
   for (const ext of extensions as string[]) {
-    if (visited.has(ext)) {
+    // Normalize the extends identifier for consistent circular detection
+    const normalizedExt = normalizeExtendsId(ext, basePath);
+    
+    if (visited.has(normalizedExt)) {
       const error = new Error(
         `Circular extends chain detected: ${[...chain, ext].join(" -> ")}`
       ) as CircularDependencyError;
@@ -56,7 +83,7 @@ export async function resolveInheritance(
     }
     
     const newChain = [...chain, ext];
-    visited.add(ext);
+    visited.add(normalizedExt);
 
     let parentData: Record<string, unknown> | null = null;
     let resolvedPath: string | null = null;
@@ -96,10 +123,13 @@ export async function resolveInheritance(
 
       if (parentData) {
         // Recursive resolution for the parent
-        parentData = await resolveInheritance(parentData, resolvedPath || basePath, visited, newChain);
+        const parentResult = await resolveInheritance(parentData, resolvedPath || basePath, visited, newChain);
+        
+        // Collect any errors from parent resolution
+        errors.push(...parentResult.errors);
         
         // Remove 'extends' from parent data before merging (we've already resolved it)
-        const { extends: _, ...parentWithoutExtends } = parentData;
+        const { extends: _, ...parentWithoutExtends } = parentResult.data;
         
         // Merge parent into local (deep merge for nested objects)
         mergedData = deepMerge(parentWithoutExtends, mergedData);
@@ -108,41 +138,17 @@ export async function resolveInheritance(
       if ((e as Error).name === "CircularDependencyError" || (e as CircularDependencyError).chain) {
         throw e; // Re-throw circular dependency errors
       }
-      console.error(`Failed to resolve extension ${ext}:`, e);
-      // Continue with other extensions even if one fails
+      // Surface non-circular resolution failures as errors
+      errors.push({
+        extends: ext,
+        message: (e as Error).message || `Failed to resolve extension: ${ext}`
+      });
     }
   }
 
   // Remove 'extends' from final merged data (it's been resolved)
   const { extends: _, ...finalData } = mergedData;
-  return finalData;
-}
-
-/**
- * Checks if an extends value is a local file path.
- */
-function isLocalPath(ext: string): boolean {
-  return ext.startsWith("./") || ext.startsWith("../") || ext.startsWith("/") || ext.endsWith(".md") || ext.endsWith(".guide");
-}
-
-/**
- * Checks if an extends value is a remote URL.
- */
-function isRemoteUrl(ext: string): boolean {
-  return ext.startsWith("http://") || ext.startsWith("https://");
-}
-
-/**
- * Loads and parses a local GUIDE.md file.
- */
-function loadLocalGuide(filePath: string): Record<string, unknown> | null {
-  try {
-    const content = fs.readFileSync(filePath, "utf-8");
-    const parsed = matter(content);
-    return parsed.data as Record<string, unknown>;
-  } catch {
-    return null;
-  }
+  return { data: finalData, errors };
 }
 
 function deepMerge(parent: any, child: any): any {

@@ -59,8 +59,7 @@ export function countSectionTokens(content: string, sectionName: string): number
         break;
       }
       
-      if (headerText.toLowerCase() === sectionName.toLowerCase() ||
-          headerText.toLowerCase().includes(sectionName.toLowerCase())) {
+      if (headerText.toLowerCase() === sectionName.toLowerCase()) {
         capturing = true;
         continue;
       }
@@ -174,21 +173,22 @@ export function analyzeTokenBudgets(data: GuideMdFrontmatter, content: string): 
 /**
  * Renders a budget bar for display.
  * 
- * @param percentage Percentage filled (0-100)
+ * @param percentage Percentage filled (can exceed 100 for over-budget)
  * @param width Bar width in characters
  * @returns ASCII bar string
  */
 export function renderBudgetBar(percentage: number, width: number = 20): string {
-  const filled = Math.round((Math.min(100, percentage) / 100) * width);
-  const empty = width - filled;
-  
-  let colorChar = "█";
   if (percentage > 100) {
-    // Over budget - use different character
-    return "█".repeat(width) + " OVER";
+    // Over budget - show proportional overage with different character
+    const overageRatio = (percentage - 100) / 100;
+    const overageChars = Math.min(width, Math.round(overageRatio * width));
+    const baseFilled = width;
+    return "█".repeat(baseFilled) + "▓".repeat(overageChars) + ` +${Math.round(percentage - 100)}%`;
   }
   
-  return colorChar.repeat(filled) + "░".repeat(empty);
+  const filled = Math.round((percentage / 100) * width);
+  const empty = width - filled;
+  return "█".repeat(filled) + "░".repeat(empty);
 }
 
 /**

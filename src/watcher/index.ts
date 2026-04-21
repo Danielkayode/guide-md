@@ -110,13 +110,19 @@ async function runLint(filePath: string, skipSecretScan?: boolean): Promise<Watc
 
 // ─── Main Watch Function ──────────────────────────────────────────────────────
 
+export interface WatchHandle {
+  stop: () => Promise<void>;
+  onResult?: ((result: WatchResult) => void) | undefined;
+}
+
 /**
  * Starts watching a GUIDE.md file for changes and runs lint on every save.
  * 
  * @param options Watch options including file path and configuration
- * @returns A function to stop the watcher
+ * @param onResult Optional callback for programmatic consumption of results
+ * @returns A handle with stop function for controlling the watcher
  */
-export function startWatch(options: WatchOptions): { stop: () => Promise<void> } {
+export function startWatch(options: WatchOptions, onResult?: (result: WatchResult) => void): WatchHandle {
   const filePath = path.resolve(options.file);
   const fileDir = path.dirname(filePath);
   
@@ -144,6 +150,8 @@ export function startWatch(options: WatchOptions): { stop: () => Promise<void> }
     try {
       const result = await runLint(filePath, options.skipSecretScan);
       printResults(result, filePath);
+      // Call the callback if provided for programmatic use
+      onResult?.(result);
     } catch (error) {
       console.log(chalk.red(`  ${ICONS.error} Error running lint: ${error instanceof Error ? error.message : "Unknown error"}`));
     } finally {
@@ -177,15 +185,17 @@ export function startWatch(options: WatchOptions): { stop: () => Promise<void> }
       process.removeListener("SIGINT", gracefulShutdown);
       process.removeListener("SIGTERM", gracefulShutdown);
     },
+    onResult,
   };
 }
 
 /**
  * Runs watch mode for a GUIDE.md file.
- * This function blocks until the watcher is stopped (Ctrl+C).
+ * This function returns a promise that resolves when the watcher is stopped.
  * 
  * @param filePath Path to the GUIDE.md file to watch
  * @param skipSecretScan Whether to skip secret scanning
+ * @returns Promise that resolves when the watcher is stopped via Ctrl+C
  */
 export async function watchGuideFile(filePath: string = "GUIDE.md", skipSecretScan?: boolean): Promise<void> {
   const resolvedPath = path.resolve(filePath);
@@ -197,10 +207,31 @@ export async function watchGuideFile(filePath: string = "GUIDE.md", skipSecretSc
     process.exit(1);
   }
   
-  const { stop } = startWatch({ file: filePath, skipSecretScan });
-  
-  // Keep the process alive
-  return new Promise(() => {
-    // This promise never resolves - the process exits via SIGINT handler
+  // Create a promise that resolves when the watcher is stopped
+  let resolvePromise: (() => void) | undefined;
+  const stopPromise = new Promise<void>((resolve) => {
+    resolvePromise = resolve;
   });
+  
+  const handle = startWatch({ file: filePath, skipSecretScan });
+  
+  // Override the graceful shutdown to resolve our promise
+  const originalStop = handle.stop;
+  handle.stop = async () => {
+    await originalStop();
+    resolvePromise?.();
+  };
+  
+  // Handle Ctrl+C to stop gracefully
+  const gracefulShutdown = async () => {
+    console.log(chalk.yellow("\n\n  Stopping watcher..."));
+    await handle.stop();
+    console.log(chalk.green(`  ${ICONS.success} Watcher stopped\n`));
+    process.exit(0);
+  };
+  
+  process.on("SIGINT", gracefulShutdown);
+  process.on("SIGTERM", gracefulShutdown);
+  
+  return stopPromise;
 }

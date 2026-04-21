@@ -11,7 +11,7 @@ import { optimizeGuide } from "../optimizer/index.js";
 import { generateHealthReport, printDashboard } from "../dashboard/index.js";
 import { McpServer } from "../mcp/server.js";
 import { installHook, uninstallHook, detectHookManager, HookManager } from "../guardian/hooks.js";
-import { resolveInheritance } from "../parser/resolver.js";
+import { resolveInheritance, ResolutionError, ResolveResult } from "../parser/resolver.js";
 import { generateReadme, backSyncFromReadme, generateSmartTemplate } from "../generator/index.js";
 import { listModules, searchModules, getModuleInfo, addModule, fetchModule } from "../registry/index.js";
 import { runDoctor } from "../doctor/index.js";
@@ -210,11 +210,20 @@ program
 
     // Resolve Inheritance
     const fileDir = path.dirname(target);
-    const resolvedData = await resolveInheritance(parsed.data, fileDir);
+    const resolveResult = await resolveInheritance(parsed.data, fileDir);
+    const resolvedData = resolveResult.data;
+
+    // Surface resolution errors as diagnostics
+    const resolveDiagnostics = resolveResult.errors.map((err: ResolutionError) => ({
+      severity: "error" as const,
+      source: "schema" as const,
+      field: "extends",
+      message: `Failed to resolve "${err.extends}": ${err.message}`
+    }));
 
     // 1. Handle Sync if requested
     if (opts.sync) {
-      const syncResult = await syncGuideFile(resolvedData as GuideMdFrontmatter, target);
+      const syncResult = await syncGuideFile(resolvedData as unknown as GuideMdFrontmatter, target);
       if (syncResult.synced) {
         const originalContent = fs.readFileSync(target, "utf-8");
         const matterParsed = matter(originalContent);
@@ -269,6 +278,13 @@ program
       exitSummary(finalResult);
     } else {
       const result = await lintGuideFile(target, { skipSecretScan: opts.skipSecretScan });
+      
+      // Add resolution errors to diagnostics
+      if (resolveDiagnostics.length > 0) {
+        result.valid = false;
+        result.diagnostics.push(...resolveDiagnostics);
+      }
+      
       // We should validate the resolved data instead of just the local data
       const schemaValidation = GuideMdSchema.safeParse(resolvedData);
       
@@ -278,6 +294,7 @@ program
           field: err.path.join("."),
           message: err.message,
           severity: "error" as const,
+          source: "schema" as const,
           received: (err as any).received
         }));
         result.valid = false;
@@ -941,21 +958,23 @@ jobs:
         run: |
           echo "## 📊 GUIDE.md AI-Readiness Report" > dashboard.md
           echo "" >> dashboard.md
-          guidemd lint GUIDE.md --json > lint-output.json 2>/dev/null || true
-          if [ -f lint-output.json ]; then
-            valid=$(cat lint-output.json | grep -o '"valid":true' || echo "")
-            if [ -n "$valid" ]; then
+          guidemd lint GUIDE.md > lint-output.txt 2>&1 || true
+          if [ -f lint-output.txt ]; then
+            if grep -q "GUIDE.md is valid" lint-output.txt; then
               echo "✅ **GUIDE.md is valid**" >> dashboard.md
             else
               echo "❌ **GUIDE.md has validation errors**" >> dashboard.md
+              echo "" >> dashboard.md
+              echo "<details><summary>Validation Details</summary>" >> dashboard.md
+              echo "" >> dashboard.md
+              echo '\`\`\`' >> dashboard.md
+              # Filter out any lines that might contain secrets (source: secret-scan)
+              grep -v "source.*secret-scan\|Potential secret" lint-output.txt | head -30 >> dashboard.md || true
+              echo '\`\`\`' >> dashboard.md
+              echo "" >> dashboard.md
+              echo "*Note: Run \`guidemd lint\` locally for full details.*" >> dashboard.md
+              echo "</details>" >> dashboard.md
             fi
-            echo "" >> dashboard.md
-            echo "<details><summary>Lint Output</summary>" >> dashboard.md
-            echo "" >> dashboard.md
-            echo '\`\`\`json' >> dashboard.md
-            cat lint-output.json | head -50 >> dashboard.md
-            echo '\`\`\`' >> dashboard.md
-            echo "</details>" >> dashboard.md
           fi
           cat dashboard.md
 
