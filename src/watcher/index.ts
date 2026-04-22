@@ -2,9 +2,9 @@ import chokidar from "chokidar";
 import chalk from "chalk";
 import path from "node:path";
 import { lintGuideFile, LintResult } from "../linter/index.js";
-import { GuideMdSchema } from "../schema/index.js";
+import { GuideMdSchema, GuideMdFrontmatter } from "../schema/index.js";
 import { parseGuideFile } from "../parser/index.js";
-import { resolveInheritance } from "../parser/resolver.js";
+import { resolveInheritance, ResolutionError } from "../parser/resolver.js";
 import { detectDrift } from "../linter/sync.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -78,6 +78,7 @@ function printResults(result: WatchResult, filePath: string): void {
 
 /**
  * Runs the full lint + drift detection pipeline.
+ * Resolves inheritance and validates the resolved data, matching CLI lint behavior.
  */
 async function runLint(filePath: string, skipSecretScan?: boolean): Promise<WatchResult> {
   const startTime = Date.now();
@@ -85,12 +86,44 @@ async function runLint(filePath: string, skipSecretScan?: boolean): Promise<Watc
   // Run lint
   const lintResult = await lintGuideFile(filePath, { skipSecretScan });
   
+  // Resolve inheritance and validate resolved data (matching CLI lint behavior)
+  if (lintResult.data) {
+    const fileDir = path.dirname(filePath);
+    const resolveResult = await resolveInheritance(lintResult.data as Record<string, unknown>, fileDir);
+    
+    // Add resolution errors as diagnostics
+    const resolveDiagnostics = resolveResult.errors.map((err: ResolutionError) => ({
+      severity: "error" as const,
+      source: "schema" as const,
+      field: "extends",
+      message: `Failed to resolve "${err.extends}": ${err.message}`
+    }));
+    
+    lintResult.diagnostics.push(...resolveDiagnostics);
+    
+    // Validate the resolved data
+    const schemaValidation = GuideMdSchema.safeParse(resolveResult.data);
+    if (!schemaValidation.success) {
+      const diagnostics = schemaValidation.error.errors.map(err => ({
+        field: err.path.join("."),
+        message: err.message,
+        severity: "error" as const,
+        source: "schema" as const,
+        received: (err as any).received
+      }));
+      lintResult.diagnostics.push(...diagnostics);
+    }
+    
+    // Update validity based on all diagnostics including resolved data
+    lintResult.valid = lintResult.diagnostics.filter(d => d.severity === "error").length === 0;
+  }
+  
   let drifts = 0;
   
   // Run drift detection if lint passed and we have valid data
   if (lintResult.valid && lintResult.data) {
     try {
-      const driftResult = await detectDrift(lintResult.data, filePath);
+      const driftResult = await detectDrift(lintResult.data as GuideMdFrontmatter, filePath);
       drifts = driftResult.length;
     } catch {
       // Ignore drift detection errors
@@ -168,22 +201,9 @@ export function startWatch(options: WatchOptions, onResult?: (result: WatchResul
       console.error(chalk.red(`\n  ${ICONS.error} Watcher error: ${error.message}`));
     });
   
-  // Handle Ctrl+C gracefully
-  const gracefulShutdown = async () => {
-    console.log(chalk.yellow("\n\n  Stopping watcher..."));
-    await watcher.close();
-    console.log(chalk.green(`  ${ICONS.success} Watcher stopped\n`));
-    process.exit(0);
-  };
-  
-  process.on("SIGINT", gracefulShutdown);
-  process.on("SIGTERM", gracefulShutdown);
-  
   return {
     stop: async () => {
       await watcher.close();
-      process.removeListener("SIGINT", gracefulShutdown);
-      process.removeListener("SIGTERM", gracefulShutdown);
     },
     onResult,
   };
@@ -191,7 +211,7 @@ export function startWatch(options: WatchOptions, onResult?: (result: WatchResul
 
 /**
  * Runs watch mode for a GUIDE.md file.
- * This function returns a promise that resolves when the watcher is stopped.
+ * This function owns process signal handling and returns a promise that resolves when the watcher is stopped.
  * 
  * @param filePath Path to the GUIDE.md file to watch
  * @param skipSecretScan Whether to skip secret scanning
@@ -215,18 +235,12 @@ export async function watchGuideFile(filePath: string = "GUIDE.md", skipSecretSc
   
   const handle = startWatch({ file: filePath, skipSecretScan });
   
-  // Override the graceful shutdown to resolve our promise
-  const originalStop = handle.stop;
-  handle.stop = async () => {
-    await originalStop();
-    resolvePromise?.();
-  };
-  
-  // Handle Ctrl+C to stop gracefully
+  // Handle Ctrl+C to stop gracefully (owned by watchGuideFile, not startWatch)
   const gracefulShutdown = async () => {
     console.log(chalk.yellow("\n\n  Stopping watcher..."));
     await handle.stop();
     console.log(chalk.green(`  ${ICONS.success} Watcher stopped\n`));
+    resolvePromise?.();
     process.exit(0);
   };
   

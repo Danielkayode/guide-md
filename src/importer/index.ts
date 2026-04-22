@@ -7,6 +7,7 @@ import matter from "gray-matter";
 
 export interface ImportResult {
   success: boolean;
+  schemaValid: boolean;
   data: GuideMdFrontmatter | null;
   content: string;
   warnings: string[];
@@ -163,11 +164,14 @@ function parseCursorrulesFormat(content: string): { data: Partial<GuideMdFrontma
       error_protocol: "verbose",
     };
     
-    // Map known cursorrules fields
+    // Map known cursorrules fields - only map string entries
     if (frontmatter.context && Array.isArray(frontmatter.context)) {
-      data.context = {
-        entry_points: frontmatter.context,
-      };
+      const stringEntries = frontmatter.context.filter((item): item is string => typeof item === "string");
+      if (stringEntries.length > 0) {
+        data.context = {
+          entry_points: stringEntries,
+        };
+      }
     }
     
     // Try to extract language from rules content
@@ -356,6 +360,7 @@ export function importGuideFile(filePath: string): ImportResult {
   if (!fs.existsSync(resolved)) {
     return {
       success: false,
+      schemaValid: false,
       data: null,
       content: "",
       warnings: [],
@@ -369,6 +374,7 @@ export function importGuideFile(filePath: string): ImportResult {
   if (!sourceType) {
     return {
       success: false,
+      schemaValid: false,
       data: null,
       content: "",
       warnings: [],
@@ -384,6 +390,7 @@ export function importGuideFile(filePath: string): ImportResult {
   } catch (err) {
     return {
       success: false,
+      schemaValid: false,
       data: null,
       content: "",
       warnings: [],
@@ -411,6 +418,7 @@ export function importGuideFile(filePath: string): ImportResult {
     default:
       return {
         success: false,
+        schemaValid: false,
         data: null,
         content: "",
         warnings: [],
@@ -439,13 +447,15 @@ export function importGuideFile(filePath: string): ImportResult {
   
   // Validate the imported data against the schema
   const validationResult = GuideMdSchema.safeParse(result.data);
-  if (!validationResult.success) {
+  const schemaValid = validationResult.success;
+  if (!schemaValid) {
     const schemaErrors = validationResult.error.errors.map(e => `${e.path.join('.')}: ${e.message}`);
     warnings.push(`⚠ Schema validation failed: ${schemaErrors.join(', ')}`);
   }
   
   return {
-    success: true,
+    success: schemaValid, // Mark success=false when schema validation fails
+    schemaValid,
     data: result.data as GuideMdFrontmatter,
     content: instructionsWithHeader,
     warnings,

@@ -28,6 +28,13 @@ const SENSITIVE_YAML_KEYS = [
   /_PASSWORD$/i,
 ];
 
+/**
+ * Checks if a YAML key matches sensitive key patterns.
+ */
+function isSensitiveKey(key: string): boolean {
+  return SENSITIVE_YAML_KEYS.some(pattern => pattern.test(key));
+}
+
 const PLACEHOLDER_VALUES = [
   /^YOUR_.*_HERE$/i,
   /^<.*>$/,
@@ -89,25 +96,25 @@ export function scanForSecrets(content: string, filePath: string): SecretScanRes
     const lineNumber = lineIndex + 1;
     
     // Check YAML keys that might contain secrets
-    for (const keyPattern of SENSITIVE_YAML_KEYS) {
-      const keyMatch = line.match(new RegExp(`^\\s*([a-zA-Z0-9_.]*${keyPattern.source.replace(/\//g, "")}\\s*):\\s*(.+)$`, "i"));
-      if (keyMatch && keyMatch[1] && keyMatch[2]) {
-        const key = keyMatch[1].trim();
-        const value = keyMatch[2].trim().replace(/^["'](.*)["']$/, "$1"); // Strip quotes
-        
+    // First capture the key, then test against sensitive patterns
+    const keyValueMatch = line.match(/^\s*([a-zA-Z0-9_.]+)\s*:\s*(.+)$/);
+    if (keyValueMatch && keyValueMatch[1] && keyValueMatch[2]) {
+      const key = keyValueMatch[1].trim();
+      const value = keyValueMatch[2].trim().replace(/^["'](.*)["']$/, "$1"); // Strip quotes
+      
+      // Test if key matches sensitive patterns
+      if (isSensitiveKey(key)) {
         // Skip placeholders and empty values
-        if (isPlaceholder(value) || value === "" || value === "null" || value === "~") {
-          continue;
+        if (!isPlaceholder(value) && value !== "" && value !== "null" && value !== "~") {
+          violations.push({
+            line: lineNumber,
+            key,
+            pattern: "Sensitive YAML key with non-placeholder value",
+            value,
+            maskedValue: maskSecret(value),
+          });
+          return; // One violation per line is enough
         }
-        
-        violations.push({
-          line: lineNumber,
-          key,
-          pattern: "Sensitive YAML key with non-placeholder value",
-          value,
-          maskedValue: maskSecret(value),
-        });
-        return; // One violation per line is enough
       }
     }
     

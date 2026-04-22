@@ -11,7 +11,7 @@ import { optimizeGuide } from "../optimizer/index.js";
 import { generateHealthReport, printDashboard } from "../dashboard/index.js";
 import { McpServer } from "../mcp/server.js";
 import { installHook, uninstallHook, detectHookManager, HookManager } from "../guardian/hooks.js";
-import { resolveInheritance, ResolutionError, ResolveResult } from "../parser/resolver.js";
+import { resolveInheritance, ResolutionError, ResolveResult, CircularDependencyError } from "../parser/resolver.js";
 import { generateReadme, backSyncFromReadme, generateSmartTemplate } from "../generator/index.js";
 import { listModules, searchModules, getModuleInfo, addModule, fetchModule } from "../registry/index.js";
 import { runDoctor } from "../doctor/index.js";
@@ -209,12 +209,46 @@ program
     }
 
     // Resolve Inheritance
-    const fileDir = path.dirname(target);
-    const resolveResult = await resolveInheritance(parsed.data, fileDir);
-    const resolvedData = resolveResult.data;
+    let resolveResult: ResolveResult | undefined;
+    let circularError: CircularDependencyError | undefined;
+    
+    try {
+      const fileDir = path.dirname(target);
+      resolveResult = await resolveInheritance(parsed.data, fileDir);
+    } catch (e) {
+      if (e instanceof CircularDependencyError) {
+        circularError = e;
+      } else {
+        throw e; // Re-throw unexpected errors
+      }
+    }
+    
+    // Handle circular dependency as a diagnostic
+    if (circularError) {
+      const result = await lintGuideFile(target, { skipSecretScan: opts.skipSecretScan });
+      result.valid = false;
+      result.diagnostics.push({
+        severity: "error" as const,
+        source: "schema" as const,
+        field: "extends",
+        message: circularError.message
+      });
+      
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+        process.exit(1);
+        return;
+      }
+      
+      printDiagnostics(result);
+      exitSummary(result);
+      return;
+    }
+    
+    const resolvedData = resolveResult!.data;
 
     // Surface resolution errors as diagnostics
-    const resolveDiagnostics = resolveResult.errors.map((err: ResolutionError) => ({
+    const resolveDiagnostics = resolveResult!.errors.map((err: ResolutionError) => ({
       severity: "error" as const,
       source: "schema" as const,
       field: "extends",
@@ -875,6 +909,10 @@ program
       console.log(`\n  ${ICONS.success} ${chalk.green(writeResult.message)}`);
       if (result.warnings.length > 0) {
         console.log(chalk.dim(`\n  Review the warnings above and adjust the generated GUIDE.md as needed.`));
+      }
+      // Exit non-zero if schema validation failed
+      if (!result.schemaValid) {
+        process.exit(1);
       }
     } else {
       console.log(`  ${ICONS.error} ${chalk.red(writeResult.message)}`);

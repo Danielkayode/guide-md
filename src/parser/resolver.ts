@@ -6,8 +6,14 @@ import path from "node:path";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export interface CircularDependencyError extends Error {
+export class CircularDependencyError extends Error {
   chain: string[];
+  
+  constructor(message: string, chain: string[]) {
+    super(message);
+    this.name = "CircularDependencyError";
+    this.chain = chain;
+  }
 }
 
 export interface ResolutionError {
@@ -70,16 +76,23 @@ export async function resolveInheritance(
 
   // Resolve extensions in reverse order so that earlier ones take precedence
   // If you have [base, middleware], middleware overrides base, and local overrides both.
-  for (const ext of extensions as string[]) {
+  for (const ext of extensions) {
+    // Runtime type check: skip non-string extends entries
+    if (typeof ext !== "string") {
+      errors.push({
+        extends: String(ext),
+        message: `Invalid extends entry: expected string, received ${typeof ext}`
+      });
+      continue;
+    }
     // Normalize the extends identifier for consistent circular detection
     const normalizedExt = normalizeExtendsId(ext, basePath);
     
     if (visited.has(normalizedExt)) {
-      const error = new Error(
-        `Circular extends chain detected: ${[...chain, ext].join(" -> ")}`
-      ) as CircularDependencyError;
-      error.chain = [...chain, ext];
-      throw error;
+      throw new CircularDependencyError(
+        `Circular extends chain detected: ${[...chain, ext].join(" -> ")}`,
+        [...chain, ext]
+      );
     }
     
     const newChain = [...chain, ext];
@@ -135,7 +148,7 @@ export async function resolveInheritance(
         mergedData = deepMerge(parentWithoutExtends, mergedData);
       }
     } catch (e) {
-      if ((e as Error).name === "CircularDependencyError" || (e as CircularDependencyError).chain) {
+      if (e instanceof CircularDependencyError) {
         throw e; // Re-throw circular dependency errors
       }
       // Surface non-circular resolution failures as errors

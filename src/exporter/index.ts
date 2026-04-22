@@ -91,7 +91,10 @@ const AgentsAdapter: ExporterAdapter = {
       rules.push("- **Cite Sources**: Include inline comments citing documentation for unfamiliar APIs");
     }
     if (data.code_style) {
-      rules.push(`- **Code Style**: Max line length ${data.code_style.max_line_length}, ${data.code_style.indentation} indentation, ${data.code_style.naming_convention} naming`);
+      const maxLineLength = data.code_style.max_line_length ?? 100;
+      const indentation = data.code_style.indentation ?? "2 spaces";
+      const namingConvention = data.code_style.naming_convention ?? "camelCase";
+      rules.push(`- **Code Style**: Max line length ${maxLineLength}, ${indentation} indentation, ${namingConvention} naming`);
     }
     if (data.error_protocol) {
       rules.push(`- **Error Protocol**: ${data.error_protocol}`);
@@ -100,17 +103,23 @@ const AgentsAdapter: ExporterAdapter = {
       rules.push("- **Strict Typing**: Always use explicit types; never 'any' or untyped params");
     }
 
-    return `# ${data.project}
+    const language = Array.isArray(data.language) ? data.language.join(", ") : (data.language ?? "typescript");
+    const runtime = data.runtime ? `- **Runtime**: ${data.runtime}` : "";
+    const framework = data.framework ? `- **Framework**: ${Array.isArray(data.framework) ? data.framework.join(", ") : data.framework}` : "";
+    const testing = data.testing?.required ? `- **Testing**: ${data.testing.framework ?? "unknown"} with ${data.testing.coverage_threshold ?? 0}% coverage` : "";
+    const architecture = data.context?.architecture_pattern ? `- **Architecture**: ${data.context.architecture_pattern}` : "";
 
-${data.description || ""}
+    return `# ${data.project ?? "untitled-project"}
+
+${data.description ?? ""}
 
 ## Constraints
 
-- **Language**: ${Array.isArray(data.language) ? data.language.join(", ") : data.language}
-${data.runtime ? `- **Runtime**: ${data.runtime}` : ""}
-${data.framework ? `- **Framework**: ${Array.isArray(data.framework) ? data.framework.join(", ") : data.framework}` : ""}
-${data.testing?.required ? `- **Testing**: ${data.testing.framework} with ${data.testing.coverage_threshold}% coverage` : ""}
-${data.context?.architecture_pattern ? `- **Architecture**: ${data.context.architecture_pattern}` : ""}
+- **Language**: ${language}
+${runtime}
+${framework}
+${testing}
+${architecture}
 
 ## Rules
 
@@ -118,57 +127,74 @@ ${rules.length > 0 ? rules.join("\n") : "- Follow standard best practices for th
 
 ## Instructions
 
-${instructions.trim()}`;
+${(instructions ?? "").trim()}`;
   }
 };
 
 const CopilotAdapter: ExporterAdapter = {
   fileName: ".github/copilot-instructions.md",
   transform: (data, instructions) => {
-    return `<!-- guidemd:generated -->
-# ${data.project}
+    const language = Array.isArray(data.language) ? data.language.join(", ") : (data.language ?? "typescript");
+    const runtime = data.runtime ? `- **Runtime**: ${data.runtime}` : "";
+    const framework = data.framework ? `- **Framework**: ${Array.isArray(data.framework) ? data.framework.join(", ") : data.framework}` : "";
+    const strictTyping = data.strict_typing ? "Enabled" : "Disabled";
+    const errorProtocol = data.error_protocol ?? "verbose";
+    
+    const codeStyle = data.code_style ? `## Code Style
 
-${data.description || ""}
+- Max line length: ${data.code_style.max_line_length ?? 100}
+- Indentation: ${data.code_style.indentation ?? "2 spaces"}
+- Naming convention: ${data.code_style.naming_convention ?? "camelCase"}
+${data.code_style.max_function_lines ? `- Max function lines: ${data.code_style.max_function_lines}` : ""}
+` : "";
+    
+    const guardrails = data.guardrails ? `## Guardrails
+
+${data.guardrails.no_hallucination ? "- Do not invent APIs, packages, or type signatures\n" : ""}${data.guardrails.scope_creep_prevention ? "- Only modify files/functions explicitly referenced in the prompt\n" : ""}${data.guardrails.dry_run_on_destructive ? "- Preview destructive operations before executing\n" : ""}${data.guardrails.cite_sources ? "- Cite documentation sources when using unfamiliar APIs\n" : ""}` : "";
+    
+    return `<!-- guidemd:generated -->
+# ${data.project ?? "untitled-project"}
+
+${data.description ?? ""}
 
 ## Project Context
 
-- **Language**: ${Array.isArray(data.language) ? data.language.join(", ") : data.language}
-${data.runtime ? `- **Runtime**: ${data.runtime}` : ""}
-${data.framework ? `- **Framework**: ${Array.isArray(data.framework) ? data.framework.join(", ") : data.framework}` : ""}
-- **Strict Typing**: ${data.strict_typing ? "Enabled" : "Disabled"}
-- **Error Protocol**: ${data.error_protocol || "verbose"}
+- **Language**: ${language}
+${runtime}
+${framework}
+- **Strict Typing**: ${strictTyping}
+- **Error Protocol**: ${errorProtocol}
 
-${data.code_style ? `## Code Style
+${codeStyle}
 
-- Max line length: ${data.code_style.max_line_length}
-- Indentation: ${data.code_style.indentation}
-- Naming convention: ${data.code_style.naming_convention}
-${data.code_style.max_function_lines ? `- Max function lines: ${data.code_style.max_function_lines}` : ""}
-` : ""}
-
-${data.guardrails ? `## Guardrails
-
-${data.guardrails.no_hallucination ? "- Do not invent APIs, packages, or type signatures\n" : ""}${data.guardrails.scope_creep_prevention ? "- Only modify files/functions explicitly referenced in the prompt\n" : ""}${data.guardrails.dry_run_on_destructive ? "- Preview destructive operations before executing\n" : ""}${data.guardrails.cite_sources ? "- Cite documentation sources when using unfamiliar APIs\n" : ""}` : ""}
+${guardrails}
 
 ## AI Instructions
 
-${instructions.trim()}`;
+${(instructions ?? "").trim()}`;
   }
 };
 
 /**
  * Escapes a string value for safe YAML emission.
  * Quotes strings that contain special characters or start with YAML indicators.
+ * Ensures generated .aider.conf.yml is always valid for arbitrary strings.
  */
 function escapeYamlString(value: string): string {
+  // Handle empty string
+  if (value === "") {
+    return '""';
+  }
+  
   // Check if string needs quoting
-  const needsQuoting = /[:#\"'{[\],>&*!|]/.test(value) ||
-    value.startsWith("-") ||
-    value.startsWith("?") ||
-    value.startsWith("%") ||
-    /^(true|false|null|yes|no|on|off)$/i.test(value) ||
-    /\n/.test(value) ||
-    value.trim() !== value;
+  const needsQuoting = /[:#\"'{[\],>&*!|@`]|\s+$|^\s+/.test(value) ||
+    /^[\-\?%]/.test(value) ||
+    /^(true|false|null|yes|no|on|off|~)$/i.test(value) ||
+    /[\x00-\x1f\x7f-\x9f]/.test(value) || // Control characters
+    /[\n\r\t]/.test(value) ||
+    /\s{2,}/.test(value) || // Multiple consecutive spaces
+    /^\d+$/.test(value) || // Pure numbers
+    /^0[xob]\d+/i.test(value); // Hex/octal/binary literals
   
   if (!needsQuoting) {
     return value;
@@ -180,7 +206,17 @@ function escapeYamlString(value: string): string {
     .replace(/"/g, '\\"')
     .replace(/\n/g, "\\n")
     .replace(/\r/g, "\\r")
-    .replace(/\t/g, "\\t") + '"';
+    .replace(/\t/g, "\\t")
+    .replace(/\x00/g, "\\0")
+    .replace(/\x07/g, "\\a")
+    .replace(/\x08/g, "\\b")
+    .replace(/\x0b/g, "\\v")
+    .replace(/\x0c/g, "\\f")
+    .replace(/\x1b/g, "\\e")
+    .replace(/\x85/g, "\\N")
+    .replace(/\xa0/g, "\\_")
+    .replace(/\u2028/g, "\\L")
+    .replace(/\u2029/g, "\\P") + '"';
 }
 
 const AiderAdapter: ExporterAdapter = {

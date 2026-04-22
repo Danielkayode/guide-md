@@ -179,14 +179,14 @@ export function analyzeTokenBudgets(data: GuideMdFrontmatter, content: string): 
  */
 export function renderBudgetBar(percentage: number, width: number = 20): string {
   if (percentage > 100) {
-    // Over budget - show proportional overage with different character
-    const overageRatio = (percentage - 100) / 100;
-    const overageChars = Math.min(width, Math.round(overageRatio * width));
-    const baseFilled = width;
-    return "█".repeat(baseFilled) + "▓".repeat(overageChars) + ` +${Math.round(percentage - 100)}%`;
+    // Over budget - fill entire bar with overage indicator, cap at width
+    const cappedPercentage = Math.min(percentage, 200); // Cap at 200% for visual sanity
+    const filled = Math.min(width, Math.round((cappedPercentage / 100) * width));
+    const empty = width - filled;
+    return "█".repeat(filled) + (empty > 0 ? "░".repeat(empty) : "") + ` +${Math.round(percentage - 100)}%`;
   }
   
-  const filled = Math.round((percentage / 100) * width);
+  const filled = Math.min(width, Math.round((percentage / 100) * width));
   const empty = width - filled;
   return "█".repeat(filled) + "░".repeat(empty);
 }

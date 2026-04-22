@@ -138,13 +138,14 @@ export async function lintGuideFile(filePath: string, options: LintOptions = {})
   const parsed = parseGuideFile(filePath);
 
   if (!parsed.success) {
-    diagnostics.push({
+    const parseDiagnostics = [...diagnostics];
+    parseDiagnostics.push({
       severity: "error",
       source: "schema",
       field: "(file)",
       message: parsed.error ?? "Unknown parse error",
     });
-    return { valid: false, file: filePath, diagnostics, data: null, secretScan };
+    return { valid: false, file: filePath, diagnostics: parseDiagnostics, data: null, secretScan };
   }
 
   // ── Step 3: Zod validation ────────────────────────────────────────────────
@@ -175,8 +176,11 @@ export async function lintGuideFile(filePath: string, options: LintOptions = {})
   const warnings = await runWarnings(result.data, filePath);
   const allDiagnostics = [...diagnostics, ...warnings];
 
+  // Valid if no errors across all diagnostics (including secret-scan)
+  const hasErrors = allDiagnostics.filter((w) => w.severity === "error").length > 0;
+
   return {
-    valid: allDiagnostics.filter((w) => w.severity === "error").length === 0,
+    valid: !hasErrors,
     file: filePath,
     diagnostics: allDiagnostics,
     data: result.data,
