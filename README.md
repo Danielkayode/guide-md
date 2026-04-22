@@ -80,7 +80,7 @@ Run `guidemd info` to see your project's health report:
 | [CLI Reference](DOCS/plugin/docs.md) | Complete command reference and options |
 | [Integration Guide](DOCS/plugin/plugin.md) | Integrate with Cursor, Windsurf, Claude, Copilot |
 | [Feature Architecture](DOCS/FEATURES.md) | How each module works internally |
-| [Plugin SDK](DOCS/PLUGINS.md) | Build extensions for @guidemd/linter |
+| [Plugin SDK](DOCS/PLUGINS.md) | Build extensions for @prismteam/linter |
 | [GUIDE.md Spec](GUIDE.md) | This project's own GUIDE.md (example) |
 
 ## 🤝 Supported AI Agents & IDEs
