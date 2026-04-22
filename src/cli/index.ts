@@ -20,6 +20,7 @@ import { calculateContextDensity, formatDensityReport } from "../stats/index.js"
 import { detectFramework } from "../doctor/index.js";
 import { runProfile, generateJsonSchema } from "../profiler/index.js";
 import { watchGuideFile } from "../watcher/index.js";
+import { diffGuides, diffGit, formatDiff, formatDiffJson, DiffOptions } from "../diff/index.js";
 import fs from "node:fs";
 import path from "node:path";
 import matter from "gray-matter";
@@ -1093,27 +1094,63 @@ jobs:
   });
 
 // ── guidemd optimize ──────────────────────────────────────────────────────────
+interface OptimizeOptions {
+  json?: boolean;
+}
+
 program
   .command("optimize [file]")
   .description("Analyze GUIDE.md for token efficiency and structural improvements")
-  .action((file: string = "GUIDE.md") => {
-    printBanner();
+  .option("--json", "Output results as JSON (for CI/tooling integration)")
+  .action((file: string = "GUIDE.md", opts: OptimizeOptions) => {
+    if (!opts.json) {
+      printBanner();
+    }
     const targetFile = path.resolve(file);
-    console.log(`  ${ICONS.optimize} Analyzing: ${chalk.underline(targetFile)}\n`);
+    
+    if (!opts.json) {
+      console.log(`  ${ICONS.optimize} Analyzing: ${chalk.underline(targetFile)}\n`);
+    }
 
     const parsed = parseGuideFile(targetFile);
     if (!parsed.success) {
-      console.log(`  ${ICONS.error} ${chalk.red(parsed.error)}`);
+      if (opts.json) {
+        console.log(JSON.stringify({ valid: false, error: parsed.error }));
+      } else {
+        console.log(`  ${ICONS.error} ${chalk.red(parsed.error)}`);
+      }
       process.exit(1);
     }
 
     const result = GuideMdSchema.safeParse(parsed.data);
     if (!result.success) {
-      console.log(`  ${ICONS.error} ${chalk.red("Cannot optimize a file with schema errors.")}`);
+      const error = "Cannot optimize a file with schema errors.";
+      if (opts.json) {
+        console.log(JSON.stringify({ valid: false, error }));
+      } else {
+        console.log(`  ${ICONS.error} ${chalk.red(error)}`);
+      }
       process.exit(1);
     }
 
     const suggestions = optimizeGuide(result.data, parsed.content);
+
+    if (opts.json) {
+      const jsonOutput = {
+        valid: true,
+        optimized: suggestions.length === 0,
+        suggestions: suggestions.map(s => ({
+          type: s.type,
+          impact: s.impact,
+          message: s.message,
+          recommendation: s.recommendation,
+        })),
+        suggestionCount: suggestions.length,
+      };
+      console.log(JSON.stringify(jsonOutput, null, 2));
+      process.exit(suggestions.length > 0 ? 1 : 0);
+      return;
+    }
 
     if (suggestions.length === 0) {
       console.log(`  ${ICONS.success} ${chalk.green("Your GUIDE.md is already highly optimized!")}`);
@@ -1135,27 +1172,111 @@ program
   });
 
 // ── guidemd info ──────────────────────────────────────────────────────────────
+interface InfoOptions {
+  json?: boolean;
+}
+
 program
   .command("info [file]")
   .description("Display a high-level health report of the project's AI-readiness")
-  .action((file: string = "GUIDE.md") => {
-    printBanner();
+  .option("--json", "Output results as JSON (for CI/tooling integration)")
+  .action((file: string = "GUIDE.md", opts: InfoOptions) => {
+    if (!opts.json) {
+      printBanner();
+    }
     const targetFile = path.resolve(file);
 
     const parsed = parseGuideFile(targetFile);
     if (!parsed.success) {
-      console.log(`  ${ICONS.error} ${chalk.red(parsed.error)}`);
+      if (opts.json) {
+        console.log(JSON.stringify({ valid: false, error: parsed.error }));
+      } else {
+        console.log(`  ${ICONS.error} ${chalk.red(parsed.error)}`);
+      }
       process.exit(1);
     }
 
     const result = GuideMdSchema.safeParse(parsed.data);
     if (!result.success) {
-      console.log(`  ${ICONS.error} ${chalk.red("Cannot generate info for a file with schema errors.")}`);
+      const error = "Cannot generate info for a file with schema errors.";
+      if (opts.json) {
+        console.log(JSON.stringify({ valid: false, error }));
+      } else {
+        console.log(`  ${ICONS.error} ${chalk.red(error)}`);
+      }
       process.exit(1);
     }
 
     const report = generateHealthReport(result.data, parsed.content);
+
+    if (opts.json) {
+      const wordCount = parsed.content.split(/\s+/).filter((w: string) => w.length > 0).length;
+      const jsonOutput = {
+        valid: true,
+        score: report.score,
+        grade: report.score >= 90 ? "A" : report.score >= 80 ? "B" : report.score >= 70 ? "C" : "D",
+        project: result.data.project,
+        language: result.data.language,
+        framework: result.data.framework,
+        stats: {
+          wordCount,
+          tokenDensity: report.tokenDensity,
+          syncStatus: report.syncStatus,
+          sectionScore: report.sectionScore,
+          guardrailCoverage: report.bestPractices.coverage,
+        },
+        sections: report.sectionCompleteness.map(s => ({
+          name: s.name,
+          present: s.present,
+          wordCount: s.wordCount,
+        })),
+        suggestions: report.suggestions,
+      };
+      console.log(JSON.stringify(jsonOutput, null, 2));
+      return;
+    }
+
     printDashboard(report);
+  });
+
+// ── guidemd diff ─────────────────────────────────────────────────────────────
+program
+  .command("diff [file]")
+  .description("Compare two GUIDE.md files and show what changed (use --git to diff against HEAD)")
+  .argument("[compare]", "File to compare against (or omit with --git flag)")
+  .option("--git", "Diff against git HEAD instead of a file")
+  .option("--breaking", "Only show changes that affect AI agent behavior")
+  .option("--json", "Output as JSON instead of formatted text")
+  .action(async (file: string = "GUIDE.md", compareFile: string | undefined, opts: DiffOptions & { git?: boolean; json?: boolean }) => {
+    printBanner();
+    const targetFile = path.resolve(file);
+
+    try {
+      let result;
+      
+      if (opts.git) {
+        console.log(`  ${ICONS.info} Diffing ${chalk.underline(targetFile)} against ${chalk.cyan("git HEAD")}\n`);
+        result = await diffGit(targetFile, { breaking: opts.breaking });
+      } else if (compareFile) {
+        const comparePath = path.resolve(compareFile);
+        console.log(`  ${ICONS.info} Diffing ${chalk.underline(targetFile)} against ${chalk.underline(comparePath)}\n`);
+        result = diffGuides(comparePath, targetFile, { breaking: opts.breaking });
+      } else {
+        console.log(`  ${ICONS.error} ${chalk.red("Either provide a file to compare or use --git flag")}`);
+        process.exit(1);
+      }
+
+      if (opts.json) {
+        console.log(formatDiffJson(result));
+      } else {
+        console.log(formatDiff(result));
+      }
+
+      process.exit(result.breaking ? 1 : 0);
+    } catch (error) {
+      console.log(`  ${ICONS.error} ${chalk.red(`Diff failed: ${error}`)}`);
+      process.exit(1);
+    }
   });
 
 // ── guidemd watch ─────────────────────────────────────────────────────────────
@@ -1475,6 +1596,171 @@ program
         console.log();
       })
   );
+
+// ── guidemd generate-docs ─────────────────────────────────────────────────────
+program
+  .command("generate-docs")
+  .description("Regenerate documentation site from the live Zod schema")
+  .option("-o, --out <dir>", "Output directory for generated docs", "docs")
+  .action((opts: { out: string }) => {
+    printBanner();
+    console.log(`  ${ICONS.info} Generating documentation from schema...\n`);
+
+    const outDir = path.resolve(opts.out);
+    
+    // Ensure docs directory exists
+    if (!fs.existsSync(outDir)) {
+      fs.mkdirSync(outDir, { recursive: true });
+    }
+
+    // Generate spec.html from schema
+    const specHtml = generateSpecHtml();
+    const specPath = path.join(outDir, "spec.html");
+    fs.writeFileSync(specPath, specHtml, "utf-8");
+    console.log(`  ${ICONS.success} ${chalk.green("Generated")} ${chalk.underline(specPath)}`);
+
+    console.log(chalk.dim(`
+Documentation generated successfully!
+The spec.html file now reflects the current Zod schema.
+`));
+  });
+
+function generateSpecHtml(): string {
+  // Get schema shape
+  const shape = (GuideMdSchema as any).shape;
+  
+  const requiredFields: string[] = [];
+  const optionalFields: string[] = [];
+
+  // Sort fields into required and optional
+  for (const [key, value] of Object.entries(shape)) {
+    const isOptional = (value as any).isOptional?.() ?? false;
+    if (isOptional) {
+      optionalFields.push(key);
+    } else {
+      requiredFields.push(key);
+    }
+  }
+
+  // Generate field documentation
+  const generateFieldDoc = (field: string) => {
+    const fieldSchema = shape[field];
+    const description = (fieldSchema as any).description || "";
+    const defaultValue = (fieldSchema as any).defaultValue?.() ?? null;
+    
+    let type = "any";
+    if ((fieldSchema as any)._def?.typeName === "ZodString") type = "string";
+    else if ((fieldSchema as any)._def?.typeName === "ZodNumber") type = "number";
+    else if ((fieldSchema as any)._def?.typeName === "ZodBoolean") type = "boolean";
+    else if ((fieldSchema as any)._def?.typeName === "ZodArray") type = "array";
+    else if ((fieldSchema as any)._def?.typeName === "ZodObject") type = "object";
+    else if ((fieldSchema as any)._def?.typeName === "ZodEnum") type = "enum";
+    else if ((fieldSchema as any)._def?.typeName === "ZodUnion") type = "union";
+
+    return `
+    <div class="field-card">
+      <div class="field-header">
+        <span class="field-name">${field}</span>
+        <span class="badge badge-${requiredFields.includes(field) ? "required" : "optional"}">${requiredFields.includes(field) ? "Required" : "Optional"}</span>
+        <span class="badge badge-type">${type}</span>
+      </div>
+      ${description ? `<div class="field-description">${description}</div>` : ""}
+      ${defaultValue !== null ? `<div class="field-default">Default: ${JSON.stringify(defaultValue)}</div>` : ""}
+    </div>`;
+  };
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GUIDE.md Specification (Generated)</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      line-height: 1.6; color: #333; background: #f8fafc;
+    }
+    .container { max-width: 900px; margin: 0 auto; padding: 0 20px; }
+    header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white; padding: 60px 0; text-align: center;
+    }
+    header h1 { font-size: 2.5rem; margin-bottom: 10px; }
+    header p { opacity: 0.9; font-size: 1.2rem; }
+    main {
+      background: white; margin: 40px auto; padding: 60px;
+      border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    }
+    h2 {
+      font-size: 1.8rem; margin: 40px 0 20px; color: #1a202c;
+      border-bottom: 2px solid #e2e8f0; padding-bottom: 10px;
+    }
+    .field-card {
+      background: #f8fafc; border: 1px solid #e2e8f0;
+      border-radius: 8px; padding: 20px; margin: 15px 0;
+    }
+    .field-header {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 10px; flex-wrap: wrap;
+    }
+    .field-name {
+      font-family: 'Fira Code', monospace;
+      font-size: 1.1rem; font-weight: 600; color: #1a202c;
+    }
+    .badge {
+      font-size: 0.75rem; padding: 3px 10px;
+      border-radius: 20px; font-weight: 600; text-transform: uppercase;
+    }
+    .badge-required { background: #fef3c7; color: #92400e; }
+    .badge-optional { background: #e0e7ff; color: #3730a3; }
+    .badge-type { background: #dbeafe; color: #1e40af; }
+    .field-description { color: #475569; margin-top: 10px; }
+    .field-default { color: #64748b; font-size: 0.9rem; font-style: italic; }
+    code {
+      font-family: 'Fira Code', monospace; background: #f1f5f9;
+      padding: 2px 6px; border-radius: 4px; font-size: 0.9em;
+    }
+    footer {
+      background: #0f172a; color: #94a3b8;
+      padding: 40px 0; text-align: center; margin-top: 60px;
+    }
+    .generated-notice {
+      background: #eff6ff; border: 1px solid #3b82f6;
+      color: #1e40af; padding: 12px 20px;
+      border-radius: 8px; margin-bottom: 30px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1>GUIDE.md Specification</h1>
+      <p>Generated from live Zod schema</p>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="generated-notice">
+      <strong>Auto-Generated</strong> — This documentation was generated from the live Zod schema 
+      on ${new Date().toISOString().split('T')[0]}.
+    </div>
+
+    <h2>Required Fields</h2>
+    ${requiredFields.map(generateFieldDoc).join("")}
+
+    <h2>Optional Fields</h2>
+    ${optionalFields.map(generateFieldDoc).join("")}
+  </main>
+
+  <footer>
+    <div class="container">
+      <p>Generated by <code>guidemd generate-docs</code></p>
+    </div>
+  </footer>
+</body>
+</html>`;
+}
 
 program.parse();
 

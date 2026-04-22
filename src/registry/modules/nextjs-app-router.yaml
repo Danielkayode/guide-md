@@ -1,0 +1,38 @@
+name: nextjs-app-router
+description: Next.js App Router conventions with server/client component rules and data fetching patterns
+version: "1.0.0"
+author: GuideMD Team
+license: MIT
+content:
+  guide_version: "1.0.0"
+  language: typescript
+  framework: nextjs
+  runtime: node@20
+  strict_typing: true
+  error_protocol: verbose
+  code_style:
+    max_line_length: 100
+    indentation: "2 spaces"
+    naming_convention: camelCase
+    max_function_lines: 50
+    prefer_immutability: true
+    prefer_early_returns: true
+  guardrails:
+    no_hallucination: true
+    scope_creep_prevention: true
+    dry_run_on_destructive: true
+    max_response_scope: function
+  context:
+    entry_points:
+      - app/layout.tsx
+      - app/page.tsx
+      - app/api
+      - src/components
+    architecture_pattern: layered
+    off_limits:
+      - .next/
+      - node_modules/
+  testing:
+    required: true
+    framework: vitest
+  description: "Next.js 14+ application using App Router with server and client components"

@@ -1,0 +1,37 @@
+name: monorepo-nx
+description: NX workspace context with project graph awareness and cross-project dependency rules
+version: "1.0.0"
+author: GuideMD Team
+license: MIT
+content:
+  guide_version: "1.0.0"
+  language: typescript
+  strict_typing: true
+  error_protocol: verbose
+  code_style:
+    max_line_length: 100
+    indentation: "2 spaces"
+    naming_convention: camelCase
+    prefer_immutability: true
+    prefer_early_returns: true
+  guardrails:
+    no_hallucination: true
+    scope_creep_prevention: true
+    dry_run_on_destructive: false
+    max_response_scope: module
+  context:
+    entry_points:
+      - apps/
+      - libs/
+      - tools/
+    off_limits:
+      - dist/
+      - .nx/
+      - node_modules/
+      - tmp/
+      - coverage/
+    architecture_pattern: layered
+  testing:
+    required: true
+    framework: jest
+  description: "NX monorepo with applications and shared libraries"

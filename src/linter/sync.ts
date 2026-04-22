@@ -101,12 +101,13 @@ export async function detectDrift(data: GuideMdFrontmatter, filePath: string): P
   // 4. Paradigm Detection (Async AST-based)
   const detectedParadigm = await detectParadigm(projectRoot);
   const currentParadigm = (data as any).paradigm;
-  if (detectedParadigm && detectedParadigm !== currentParadigm) {
+  // Only report drift if paradigm is explicitly set and differs from detected
+  if (detectedParadigm && currentParadigm && detectedParadigm !== currentParadigm) {
     drifts.push({
       field: "paradigm",
       actual: detectedParadigm,
-      expected: currentParadigm || "none",
-      message: `Detected ${detectedParadigm} paradigm but GUIDE.md ${currentParadigm ? `says ${currentParadigm}` : "has no paradigm set"}.`,
+      expected: currentParadigm,
+      message: `Detected ${detectedParadigm} paradigm but GUIDE.md says ${currentParadigm}.`,
     });
   }
 

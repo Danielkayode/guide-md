@@ -1,0 +1,127 @@
+{
+  "name": "vscode-guidemd",
+  "displayName": "GUIDE.md Linter",
+  "description": "Official VS Code extension for the GUIDE.md AI Context Interface standard",
+  "version": "1.0.0",
+  "publisher": "guidemd",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Linters",
+    "Programming Languages",
+    "Machine Learning",
+    "AI"
+  ],
+  "keywords": [
+    "guidemd",
+    "ai",
+    "context",
+    "llm",
+    "linter",
+    "documentation"
+  ],
+  "activationEvents": [
+    "onLanguage:markdown",
+    "workspaceContains:GUIDE.md"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "guidemd",
+        "aliases": [
+          "GUIDE.md",
+          "guidemd"
+        ],
+        "extensions": [
+          ".guidemd"
+        ],
+        "filenamePatterns": [
+          "GUIDE.md"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "guidemd",
+        "scopeName": "text.guidemd",
+        "path": "./syntaxes/guidemd.tmLanguage.json",
+        "embeddedLanguages": {
+          "meta.embedded.block.yaml": "yaml",
+          "meta.embedded.block.markdown": "markdown"
+        }
+      }
+    ],
+    "commands": [
+      {
+        "command": "guidemd.openDashboard",
+        "title": "GUIDE.md: Open Dashboard",
+        "category": "GUIDE.md"
+      },
+      {
+        "command": "guidemd.lint",
+        "title": "GUIDE.md: Lint",
+        "category": "GUIDE.md"
+      },
+      {
+        "command": "guidemd.sync",
+        "title": "GUIDE.md: Sync with Project",
+        "category": "GUIDE.md"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "guidemd.openDashboard",
+          "when": "workspaceHasGUIDEMD"
+        },
+        {
+          "command": "guidemd.lint",
+          "when": "editorLangId == guidemd || editorLangId == markdown"
+        },
+        {
+          "command": "guidemd.sync",
+          "when": "workspaceHasGUIDEMD"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "GUIDE.md Linter",
+      "properties": {
+        "guidemd.cliPath": {
+          "type": "string",
+          "default": "guidemd",
+          "description": "Path to the guidemd CLI executable"
+        },
+        "guidemd.lintOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run linter on every save of GUIDE.md"
+        },
+        "guidemd.showInlineDiagnostics": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show inline diagnostics for GUIDE.md files"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.6",
+    "@types/vscode": "^1.74.0",
+    "@typescript-eslint/eslint-plugin": "^6.15.0",
+    "@typescript-eslint/parser": "^6.15.0",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.3"
+  }
+}

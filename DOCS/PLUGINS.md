@@ -2,6 +2,8 @@
 
 This guide walks you through building, testing, and publishing plugins for the GUIDE.md ecosystem.
 
+> **⚠️ Implementation Status**: The plugin system described in this document is planned but **not yet fully implemented** in the current release. The `GuidemdPlugin` interface and plugin loading mechanism are defined in documentation but the plugin runtime is still under development. The examples and API signatures documented here represent the target design.
+
 ---
 
 ## Table of Contents

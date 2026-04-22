@@ -11,6 +11,8 @@ This document maps each directory in `src/` to its user-facing capabilities, exp
 3. [The Sync Engine (src/linter/sync.ts)](#the-sync-engine)
 4. [The Observability Suite](#the-observability-suite)
 5. [Additional Capabilities](#additional-capabilities)
+6. [The Importer (src/importer/)](#the-importer)
+7. [The Watcher (src/watcher/)](#the-watcher)
 
 ---
 
@@ -369,6 +371,88 @@ Visual AI-Readiness Dashboard showing:
 
 ---
 
+## The Importer (src/importer/)
+
+**Directory:** `src/importer/`  
+**CLI Command:** `guidemd import <file>`  
+**Purpose:** Reverse-parse AI context files back into GUIDE.md
+
+### How It Works
+
+The Importer performs bidirectional conversion by parsing existing AI context files and extracting structured data:
+
+1. **File Detection**: Automatically detects file type from extension/name:
+   - `CLAUDE.md` → Claude format
+   - `.cursorrules` → Cursor format
+   - `.windsurfrules` → Windsurf format
+   - `AGENTS.md` → Generic agents format
+
+2. **Field Mapping**: Extracts common fields:
+   - Project name from H1 headings
+   - Language from tech stack sections
+   - Framework from dependencies mentioned
+   - Code style from rules sections
+
+3. **Best-Effort Parsing**: Since AI context files lack strict structure, the importer uses heuristics:
+   - Pattern matching for key-value pairs
+   - Section header detection
+   - List item parsing for rules
+
+### Usage
+
+```bash
+# Import a Cursor rules file
+guidemd import .cursorrules
+
+# Import with custom output path
+guidemd import CLAUDE.md -o ./docs/GUIDE.md
+
+# Preview without writing
+guidemd import .windsurfrules --dry-run
+```
+
+---
+
+## The Watcher (src/watcher/)
+
+**Directory:** `src/watcher/`  
+**CLI Command:** `guidemd watch [file]`  
+**Purpose:** Development mode with automatic re-linting
+
+### How It Works
+
+The Watcher uses `chokidar` to monitor GUIDE.md for changes:
+
+1. **File Watching**: Monitors the target GUIDE.md file for modifications
+2. **Automatic Re-lint**: Runs `guidemd lint` on every save
+3. **Instant Feedback**: Shows validation results immediately
+
+### Usage
+
+```bash
+# Watch default GUIDE.md
+guidemd watch
+
+# Watch specific file
+guidemd watch ./docs/GUIDE.md
+
+# Watch without secret scanning
+guidemd watch --skip-secret-scan
+```
+
+### Development Workflow
+
+Ideal for iterative GUIDE.md editing:
+```bash
+# Terminal 1: Start watcher
+guidemd watch
+
+# Terminal 2: Edit GUIDE.md
+# Every save triggers instant validation feedback
+```
+
+---
+
 ## Summary: src/ Directory → Capability Mapping
 
 | Directory | User Capability | CLI Entry Point |
@@ -385,15 +469,19 @@ Visual AI-Readiness Dashboard showing:
 | `src/registry/` | Module registry | `guidemd registry`, `guidemd add` |
 | `src/stats/` | Context density | `guidemd lint --stats` |
 | `src/verify/` | Cold start verification | `guidemd verify` |
-| `src/generator/` | README generation | `guidemd generate-readme` |
+| `src/generator/` | README generation | `guidemd generate-readme`, `guidemd back-sync-readme` |
+| `src/importer/` | Reverse-parse AI context files | `guidemd import` |
+| `src/watcher/` | File watching mode | `guidemd watch` |
 | `src/parser/` | Inheritance resolution | Handled automatically |
 
 ---
 
 ## Plugin System Architecture
 
-**Directory:** `src/plugins/` (extension point)  
+**Directory:** `src/plugins/` (extension point - currently empty, planned feature)  
 **Purpose:** Extensible plugin interface for third-party extensions
+
+> **⚠️ Note**: The plugin system is planned but not yet fully implemented. The `src/plugins/` directory is currently empty and the `GuidemdPlugin` interface is documented as the target design. Plugin loading and execution will be available in a future release.
 
 ### GuidemdPlugin Interface
 

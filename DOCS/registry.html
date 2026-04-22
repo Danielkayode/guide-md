@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GUIDE.md Registry</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      background: #f8fafc;
+    }
+    
+    .container {
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 0 20px;
+    }
+    
+    header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 60px 0;
+      text-align: center;
+    }
+    
+    header h1 {
+      font-size: 2.5rem;
+      margin-bottom: 10px;
+    }
+    
+    header p {
+      opacity: 0.9;
+      font-size: 1.2rem;
+    }
+    
+    nav {
+      background: #1a202c;
+      padding: 15px 0;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    
+    nav .container {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .nav-links {
+      display: flex;
+      gap: 30px;
+      list-style: none;
+    }
+    
+    .nav-links a {
+      color: #94a3b8;
+      text-decoration: none;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+    
+    .nav-links a:hover,
+    .nav-links a.active {
+      color: white;
+    }
+    
+    .logo {
+      font-size: 1.3rem;
+      font-weight: 700;
+      color: white;
+    }
+    
+    main {
+      background: white;
+      margin: 40px auto;
+      padding: 60px;
+      border-radius: 16px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    }
+    
+    h2 {
+      font-size: 1.8rem;
+      margin: 40px 0 20px;
+      color: #1a202c;
+      border-bottom: 2px solid #e2e8f0;
+      padding-bottom: 10px;
+    }
+    
+    .intro {
+      font-size: 1.1rem;
+      color: #475569;
+      margin-bottom: 30px;
+    }
+    
+    .module-card {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 25px;
+      margin: 20px 0;
+      transition: all 0.2s;
+    }
+    
+    .module-card:hover {
+      border-color: #667eea;
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.1);
+    }
+    
+    .module-header {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      margin-bottom: 12px;
+    }
+    
+    .module-name {
+      font-family: 'Fira Code', monospace;
+      font-size: 1.2rem;
+      font-weight: 600;
+      color: #667eea;
+    }
+    
+    .module-version {
+      font-size: 0.85rem;
+      color: #64748b;
+      background: #e2e8f0;
+      padding: 2px 10px;
+      border-radius: 20px;
+    }
+    
+    .module-description {
+      color: #475569;
+      margin-bottom: 15px;
+    }
+    
+    .install-cmd {
+      background: #1e293b;
+      color: #e2e8f0;
+      padding: 12px 18px;
+      border-radius: 8px;
+      font-family: 'Fira Code', monospace;
+      font-size: 0.9rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+    }
+    
+    .install-cmd:hover {
+      background: #2d3748;
+    }
+    
+    .copy-hint {
+      font-size: 0.75rem;
+      color: #94a3b8;
+    }
+    
+    .frontmatter-preview {
+      margin-top: 15px;
+      background: #1e293b;
+      color: #e2e8f0;
+      padding: 15px 20px;
+      border-radius: 8px;
+      overflow-x: auto;
+    }
+    
+    .frontmatter-preview code {
+      font-family: 'Fira Code', monospace;
+      font-size: 0.8rem;
+      line-height: 1.5;
+      white-space: pre;
+    }
+    
+    .tags {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+    
+    .tag {
+      font-size: 0.75rem;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-weight: 500;
+    }
+    
+    .tag-lang {
+      background: #dbeafe;
+      color: #1e40af;
+    }
+    
+    .tag-framework {
+      background: #d1fae5;
+      color: #065f46;
+    }
+    
+    .tag-purpose {
+      background: #fef3c7;
+      color: #92400e;
+    }
+    
+    .tag-security {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+    
+    footer {
+      background: #0f172a;
+      color: #94a3b8;
+      padding: 40px 0;
+      text-align: center;
+      margin-top: 60px;
+    }
+    
+    footer a {
+      color: #667eea;
+      text-decoration: none;
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="container">
+      <div class="logo">📋 GUIDE.md</div>
+      <ul class="nav-links">
+        <li><a href="index.html">Home</a></li>
+        <li><a href="spec.html">Spec</a></li>
+        <li><a href="commands.html">Commands</a></li>
+        <li><a href="registry.html" class="active">Registry</a></li>
+        <li><a href="https://github.com/guidemd/linter">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <header>
+    <div class="container">
+      <h1>📦 Registry</h1>
+      <p>Ready-to-use modules for your GUIDE.md</p>
+    </div>
+  </header>
+
+  <main class="container">
+    <p class="intro">
+      The GUIDE.md registry provides pre-configured modules that you can extend in your own GUIDE.md files. 
+      Install with <code>guidemd add &lt;module&gt;</code> or use <code>extends: "&lt;module&gt;"</code> in your frontmatter.
+    </p>
+
+    <h2>Available Modules</h2>
+
+    <div class="module-card">
+      <div class="module-header">
+        <span class="module-name">typescript-strict</span>
+        <span class="module-version">v1.0.0</span>
+      </div>
+      <div class="module-description">Strict TypeScript configuration with comprehensive guardrails for type safety.</div>
+      <div class="install-cmd" onclick="copyCmd('guidemd add typescript-strict')">
+        <code>$ guidemd add typescript-strict</code>
+        <span class="copy-hint">Click to copy</span>
+      </div>
+      <div class="frontmatter-preview"><code>strict_typing: true
+code_style:
+  max_line_length: 100
+  indentation: "2 spaces"
+  naming_convention: camelCase
+  prefer_immutability: true
+guardrails:
+  no_hallucination: true
+  scope_creep_prevention: true</code></div>
+      <div class="tags">
+        <span class="tag tag-lang">TypeScript</span>
+        <span class="tag tag-purpose">Strict</span>
+      </div>
+    </div>
+
+    <div class="module-card">
+      <div class="module-header">
+        <span class="module-name">react-component</span>
+        <span class="module-version">v1.0.0</span>
+      </div>
+      <div class="module-description">React-specific rules including hooks patterns, functional components only, and prop validation.</div>
+      <div class="install-cmd" onclick="copyCmd('guidemd add react-component')">
+        <code>$ guidemd add react-component</code>
+        <span class="copy-hint">Click to copy</span>
+      </div>
+      <div class="frontmatter-preview"><code>language: typescript
+framework: react
+code_style:
+  naming_convention: PascalCase
+  max_function_lines: 40
+guardrails:
+  no_hallucination: true
+  max_response_scope: function
+context:
+  entry_points:
+    - src/components
+    - src/hooks</code></div>
+      <div class="tags">
+        <span class="tag tag-lang">TypeScript</span>
+        <span class="tag tag-framework">React</span>
+      </div>
+    </div>
+
+    <div class="module-card">
+      <div class="module-header">
+        <span class="module-name">nextjs-app-router</span>
+        <span class="module-version">v1.0.0</span>
+      </div>
+      <div class="module-description">Next.js App Router conventions with server/client component rules and data fetching patterns.</div>
+      <div class="install-cmd" onclick="copyCmd('guidemd add nextjs-app-router')">
+        <code>$ guidemd add nextjs-app-router</code>
+        <span class="copy-hint">Click to copy</span>
+      </div>
+      <div class="frontmatter-preview"><code>language: typescript
+framework: nextjs
+context:
+  entry_points:
+    - app/layout.tsx
+    - app/page.tsx
+    - app/api
+  architecture_pattern: layered
+guardrails:
+  no_hallucination: true
+  dry_run_on_destructive: true</code></div>
+      <div class="tags">
+        <span class="tag tag-lang">TypeScript</span>
+        <span class="tag tag-framework">Next.js</span>
+      </div>
+    </div>
+
+    <div class="module-card">
+      <div class="module-header">
+        <span class="module-name">python-fastapi</span>
+        <span class="module-version">v1.0.0</span>
+      </div>
+      <div class="module-description">FastAPI patterns with async-first design, Pydantic models, and dependency injection guidance.</div>
+      <div class="install-cmd" onclick="copyCmd('guidemd add python-fastapi')">
+        <code>$ guidemd add python-fastapi</code>
+        <span class="copy-hint">Click to copy</span>
+      </div>
+      <div class="frontmatter-preview"><code>language: python
+framework: fastapi
+runtime: python@3.11
+code_style:
+  max_line_length: 88
+  indentation: "4 spaces"
+  naming_convention: snake_case
+guardrails:
+  no_hallucination: true
+  scope_creep_prevention: true
+context:
+  entry_points:
+    - app/main.py
+    - app/routers</code></div>
+      <div class="tags">
+        <span class="tag tag-lang">Python</span>
+        <span class="tag tag-framework">FastAPI</span>
+      </div>
+    </div>
+
+    <div class="module-card">
+      <div class="module-header">
+        <span class="module-name">security-hardened</span>
+        <span class="module-version">v1.0.0</span>
+      </div>
+      <div class="module-description">Enhanced security with expanded off_limits, secret scanning, and no eval/exec guardrails.</div>
+      <div class="install-cmd" onclick="copyCmd('guidemd add security-hardened')">
+        <code>$ guidemd add security-hardened</code>
+        <span class="copy-hint">Click to copy</span>
+      </div>
+      <div class="frontmatter-preview"><code>guardrails:
+  no_hallucination: true
+  dry_run_on_destructive: true
+  scope_creep_prevention: true
+context:
+  off_limits:
+    - .env
+    - .env.*
+    - secrets/
+    - credentials/
+    - *.key
+    - *.pem</code></div>
+      <div class="tags">
+        <span class="tag tag-security">Security</span>
+        <span class="tag tag-purpose">Hardened</span>
+      </div>
+    </div>
+
+    <div class="module-card">
+      <div class="module-header">
+        <span class="module-name">monorepo-nx</span>
+        <span class="module-version">v1.0.0</span>
+      </div>
+      <div class="module-description">NX workspace context with project graph awareness and cross-project dependency rules.</div>
+      <div class="install-cmd" onclick="copyCmd('guidemd add monorepo-nx')">
+        <code>$ guidemd add monorepo-nx</code>
+        <span class="copy-hint">Click to copy</span>
+      </div>
+      <div class="frontmatter-preview"><code>language: typescript
+context:
+  entry_points:
+    - apps/
+    - libs/
+    - tools/
+  off_limits:
+    - dist/
+    - .nx/
+guardrails:
+  scope_creep_prevention: true
+  max_response_scope: module</code></div>
+      <div class="tags">
+        <span class="tag tag-lang">TypeScript</span>
+        <span class="tag tag-purpose">Monorepo</span>
+      </div>
+    </div>
+
+    <div class="module-card">
+      <div class="module-header">
+        <span class="module-name">testing-jest</span>
+        <span class="module-version">v1.0.0</span>
+      </div>
+      <div class="module-description">Jest/Vitest patterns with coverage thresholds and test file naming conventions.</div>
+      <div class="install-cmd" onclick="copyCmd('guidemd add testing-jest')">
+        <code>$ guidemd add testing-jest</code>
+        <span class="copy-hint">Click to copy</span>
+      </div>
+      <div class="frontmatter-preview"><code>testing:
+  required: true
+  framework: vitest
+  coverage_threshold: 80
+  test_alongside_code: true
+code_style:
+  naming_convention: camelCase
+guardrails:
+  no_hallucination: true</code></div>
+      <div class="tags">
+        <span class="tag tag-purpose">Testing</span>
+        <span class="tag tag-framework">Jest/Vitest</span>
+      </div>
+    </div>
+
+    <div class="module-card">
+      <div class="module-header">
+        <span class="module-name">accessibility-a11y</span>
+        <span class="module-version">v1.0.0</span>
+      </div>
+      <div class="module-description">WCAG 2.1 AA guardrails with semantic HTML rules and ARIA requirements for accessible applications.</div>
+      <div class="install-cmd" onclick="copyCmd('guidemd add accessibility-a11y')">
+        <code>$ guidemd add accessibility-a11y</code>
+        <span class="copy-hint">Click to copy</span>
+      </div>
+      <div class="frontmatter-preview"><code>guardrails:
+  no_hallucination: true
+  scope_creep_prevention: true
+context:
+  entry_points:
+    - src/components
+    - src/pages
+code_style:
+  naming_convention: camelCase
+  max_function_lines: 30</code></div>
+      <div class="tags">
+        <span class="tag tag-purpose">Accessibility</span>
+        <span class="tag tag-purpose">A11y</span>
+      </div>
+    </div>
+
+    <h2>How to Use</h2>
+    
+    <div class="module-card" style="background: #fffbeb; border-color: #f59e0b;">
+      <h3 style="margin-bottom: 15px; color: #92400e;">Method 1: Using the CLI</h3>
+      <div class="install-cmd" style="background: #f59e0b; color: white;">
+        <code>$ guidemd add &lt;module-name&gt;</code>
+      </div>
+      <p style="margin-top: 15px; color: #92400e;">
+        This installs the module into your GUIDE.md's <code>modules</code> field and merges its frontmatter.
+      </p>
+    </div>
+
+    <div class="module-card" style="background: #eff6ff; border-color: #3b82f6;">
+      <h3 style="margin-bottom: 15px; color: #1e40af;">Method 2: Using extends</h3>
+      <div class="frontmatter-preview" style="background: #3b82f6;">
+        <code style="color: white;">extends: "typescript-strict"
+# or multiple
+extends:
+  - "typescript-strict"
+  - "testing-jest"</code>
+      </div>
+      <p style="margin-top: 15px; color: #1e40af;">
+        Add to your frontmatter. Values in your file override the module's values.
+      </p>
+    </div>
+  </main>
+
+  <footer>
+    <div class="container">
+      <p>GUIDE.md Registry. <a href="https://github.com/guidemd/linter">Contribute on GitHub</a></p>
+    </div>
+  </footer>
+
+  <script>
+    function copyCmd(cmd) {
+      navigator.clipboard.writeText(cmd);
+      const hint = event.target.closest('.install-cmd').querySelector('.copy-hint');
+      const original = hint.textContent;
+      hint.textContent = 'Copied!';
+      setTimeout(() => hint.textContent = original, 2000);
+    }
+  </script>
+</body>
+</html>

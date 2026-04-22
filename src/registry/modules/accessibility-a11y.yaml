@@ -1,0 +1,32 @@
+name: accessibility-a11y
+description: WCAG 2.1 AA guardrails with semantic HTML rules and ARIA requirements
+version: "1.0.0"
+author: GuideMD Team
+license: MIT
+content:
+  guide_version: "1.0.0"
+  strict_typing: true
+  error_protocol: verbose
+  code_style:
+    max_line_length: 100
+    indentation: "2 spaces"
+    naming_convention: camelCase
+    max_function_lines: 30
+    prefer_immutability: true
+    prefer_early_returns: true
+  guardrails:
+    no_hallucination: true
+    cite_sources: true
+    scope_creep_prevention: true
+    dry_run_on_destructive: true
+    max_response_scope: function
+  context:
+    entry_points:
+      - src/components
+      - src/pages
+      - src/app
+    off_limits:
+      - node_modules/
+  testing:
+    required: true
+  description: "Accessibility-first development following WCAG 2.1 AA standards"

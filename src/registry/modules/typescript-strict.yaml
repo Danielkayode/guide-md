@@ -1,0 +1,27 @@
+name: typescript-strict
+description: Strict TypeScript configuration with comprehensive guardrails for type safety
+version: "1.0.0"
+author: GuideMD Team
+license: MIT
+content:
+  guide_version: "1.0.0"
+  strict_typing: true
+  error_protocol: verbose
+  code_style:
+    max_line_length: 100
+    indentation: "2 spaces"
+    naming_convention: camelCase
+    max_function_lines: 50
+    prefer_immutability: true
+    prefer_early_returns: true
+  guardrails:
+    no_hallucination: true
+    cite_sources: false
+    scope_creep_prevention: true
+    dry_run_on_destructive: false
+    max_response_scope: function
+  testing:
+    required: true
+    test_alongside_code: true
+  context:
+    architecture_pattern: layered

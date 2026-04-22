@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GUIDE.md Specification</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      background: #f8fafc;
+    }
+    
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 0 20px;
+    }
+    
+    header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 60px 0;
+      text-align: center;
+    }
+    
+    header h1 {
+      font-size: 2.5rem;
+      margin-bottom: 10px;
+    }
+    
+    header p {
+      opacity: 0.9;
+      font-size: 1.2rem;
+    }
+    
+    nav {
+      background: #1a202c;
+      padding: 15px 0;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    
+    nav .container {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .nav-links {
+      display: flex;
+      gap: 30px;
+      list-style: none;
+    }
+    
+    .nav-links a {
+      color: #94a3b8;
+      text-decoration: none;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+    
+    .nav-links a:hover,
+    .nav-links a.active {
+      color: white;
+    }
+    
+    .logo {
+      font-size: 1.3rem;
+      font-weight: 700;
+      color: white;
+    }
+    
+    main {
+      background: white;
+      margin: 40px auto;
+      padding: 60px;
+      border-radius: 16px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    }
+    
+    h2 {
+      font-size: 1.8rem;
+      margin: 40px 0 20px;
+      color: #1a202c;
+      border-bottom: 2px solid #e2e8f0;
+      padding-bottom: 10px;
+    }
+    
+    h3 {
+      font-size: 1.4rem;
+      margin: 30px 0 15px;
+      color: #334155;
+    }
+    
+    h4 {
+      font-size: 1.1rem;
+      margin: 20px 0 10px;
+      color: #475569;
+    }
+    
+    p {
+      margin-bottom: 15px;
+      color: #475569;
+    }
+    
+    .field-card {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 20px;
+      margin: 15px 0;
+    }
+    
+    .field-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    
+    .field-name {
+      font-family: 'Fira Code', monospace;
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #1a202c;
+    }
+    
+    .badge {
+      font-size: 0.75rem;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    
+    .badge-required {
+      background: #fef3c7;
+      color: #92400e;
+    }
+    
+    .badge-optional {
+      background: #e0e7ff;
+      color: #3730a3;
+    }
+    
+    .badge-type {
+      background: #dbeafe;
+      color: #1e40af;
+    }
+    
+    .field-type {
+      color: #64748b;
+      font-size: 0.9rem;
+      margin-bottom: 8px;
+    }
+    
+    .field-default {
+      color: #64748b;
+      font-size: 0.9rem;
+      font-style: italic;
+    }
+    
+    .field-description {
+      color: #475569;
+      margin-top: 10px;
+    }
+    
+    .example {
+      background: #1e293b;
+      color: #e2e8f0;
+      padding: 15px;
+      border-radius: 8px;
+      margin: 10px 0;
+      overflow-x: auto;
+    }
+    
+    .example code {
+      font-family: 'Fira Code', monospace;
+      font-size: 0.9rem;
+    }
+    
+    ul {
+      margin: 15px 0 15px 25px;
+    }
+    
+    li {
+      margin: 8px 0;
+      color: #475569;
+    }
+    
+    code {
+      font-family: 'Fira Code', monospace;
+      background: #f1f5f9;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+    
+    pre {
+      background: #1e293b;
+      color: #e2e8f0;
+      padding: 20px;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin: 20px 0;
+    }
+    
+    pre code {
+      background: none;
+      padding: 0;
+    }
+    
+    .section-nav {
+      background: #f8fafc;
+      padding: 20px;
+      border-radius: 8px;
+      margin: 20px 0;
+    }
+    
+    .section-nav h4 {
+      margin-top: 0;
+    }
+    
+    .section-nav ul {
+      margin: 10px 0;
+    }
+    
+    footer {
+      background: #0f172a;
+      color: #94a3b8;
+      padding: 40px 0;
+      text-align: center;
+      margin-top: 60px;
+    }
+    
+    footer a {
+      color: #667eea;
+      text-decoration: none;
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="container">
+      <div class="logo">📋 GUIDE.md</div>
+      <ul class="nav-links">
+        <li><a href="index.html">Home</a></li>
+        <li><a href="spec.html" class="active">Spec</a></li>
+        <li><a href="commands.html">Commands</a></li>
+        <li><a href="registry.html">Registry</a></li>
+        <li><a href="https://github.com/guidemd/linter">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <header>
+    <div class="container">
+      <h1>GUIDE.md Specification</h1>
+      <p>Complete reference for the AI Context Interface standard</p>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="section-nav">
+      <h4>Jump to:</h4>
+      <ul>
+        <li><a href="#overview">Overview</a></li>
+        <li><a href="#required-fields">Required Fields</a></li>
+        <li><a href="#optional-fields">Optional Fields</a></li>
+        <li><a href="#nested-schemas">Nested Schemas</a></li>
+        <li><a href="#inheritance">Inheritance</a></li>
+      </ul>
+    </div>
+
+    <h2 id="overview">Overview</h2>
+    <p>GUIDE.md is a YAML-frontmatter markdown file that defines how AI agents should interact with your codebase. It provides context, constraints, and guardrails to ensure consistent AI behavior across different tools and models.</p>
+
+    <h3>File Structure</h3>
+    <pre><code>---
+# YAML frontmatter
+key: value
+---
+
+# Markdown body
+## Project Overview
+...
+
+## Domain Vocabulary
+...</code></pre>
+
+    <h2 id="required-fields">Required Fields</h2>
+
+    <div class="field-card">
+      <div class="field-header">
+        <span class="field-name">guide_version</span>
+        <span class="badge badge-required">Required</span>
+        <span class="badge badge-type">string</span>
+      </div>
+      <div class="field-type">Must follow semver format: <code>"1.0.0"</code></div>
+      <div class="field-description">The version of the GUIDE.md spec this file follows.</div>
+      <div class="example"><code>guide_version: "1.0.0"</code></div>
+    </div>
+
+    <div class="field-card">
+      <div class="field-header">
+        <span class="field-name">project</span>
+        <span class="badge badge-required">Required</span>
+        <span class="badge badge-type">string</span>
+      </div>
+      <div class="field-type">Min 2 characters, max 100 characters</div>
+      <div class="field-description">The name of your project.</div>
+      <div class="example"><code>project: "my-awesome-app"</code></div>
+    </div>
+
+    <div class="field-card">
+      <div class="field-header">
+        <span class="field-name">language</span>
+        <span class="badge badge-required">Required</span>
+        <span class="badge badge-type">string | string[]</span>
+      </div>
+      <div class="field-type">One or more supported languages</div>
+      <div class="field-description">Primary programming language(s) for the project.</div>
+      <div class="field-default">Supported: typescript, javascript, python, rust, go, java, kotlin, swift, cpp, c, csharp, ruby, php, scala, haskell, elixir, zig</div>
+      <div class="example"><code>language: typescript<br># or<br>language: [typescript, javascript]</code></div>
+    </div>
+
+    <div class="field-card">
+      <div class="field-header">
+        <span class="field-name">strict_typing</span>
+        <span class="badge badge-required">Required</span>
+        <span class="badge badge-type">boolean</span>
+      </div>
+      <div class="field-description">Instructs AI to always use explicit types; never 'any' or untyped params.</div>
+      <div class="example"><code>strict_typing: true</code></div>
+    </div>
+
+    <div class="field-card">
+      <div class="field-header">
+        <span class="field-name">error_protocol</span>
+        <span class="badge badge-required">Required</span>
+        <span class="badge badge-type">enum</span>
+      </div>
+      <div class="field-type">One of: <code>"verbose"</code>, <code>"silent"</code>, <code>"structured"</code></div>
+      <div class="field-description">How AI should handle and surface errors in generated code.</div>
+      <div class="example"><code>error_protocol: verbose</code></div>
+    </div>
+
+    <h2 id="optional-fields">Optional Fields</h2>
+
+    <div class="field-card">
+      <div class="field-header">
+        <span class="field-name">runtime</span>
+        <span class="badge badge-optional">Optional</span>
+        <span class="badge badge-type">string</span>
+      </div>
+      <div class="field-description">Runtime environment with version.</div>
+      <div class="example"><code>runtime: "node@22"</code></div>
+    </div>
+
+    <div class="field-card">
+      <div class="field-header">
+        <span class="field-name">framework</span>
+        <span class="badge badge-optional">Optional</span>
+        <span class="badge badge-type">string | string[]</span>
+      </div>
+      <div class="field-description">Framework(s) used in the project.</div>
+      <div class="example"><code>framework: "express"<br># or<br>framework: ["react", "nextjs"]</code></div>
+    </div>
+
+    <div class="field-card">
+      <div class="field-header">
+        <span class="field-name">description</span>
+        <span class="badge badge-optional">Optional</span>
+        <span class="badge badge-type">string</span>
+      </div>
+      <div class="field-type">Min 20 characters, max 500 characters</div>
+      <div class="field-description">Brief description of the project for AI context.</div>
+      <div class="example"><code>description: "A web application for managing user authentication and authorization"</code></div>
+    </div>
+
+    <div class="field-card">
+      <div class="field-header">
+        <span class="field-name">last_updated</span>
+        <span class="badge badge-optional">Optional</span>
+        <span class="badge badge-type">string</span>
+      </div>
+      <div class="field-type">ISO date format: YYYY-MM-DD</div>
+      <div class="field-description">When the GUIDE.md was last updated.</div>
+      <div class="example"><code>last_updated: "2024-01-15"</code></div>
+    </div>
+
+    <div class="field-card">
+      <div class="field-header">
+        <span class="field-name">maintainers</span>
+        <span class="badge badge-optional">Optional</span>
+        <span class="badge badge-type">string[]</span>
+      </div>
+      <div class="field-type">Array of email addresses</div>
+      <div class="field-description">Project maintainers for contact.</div>
+      <div class="example"><code>maintainers:<br>  - "alice@example.com"<br>  - "bob@example.com"</code></div>
+    </div>
+
+    <div class="field-card">
+      <div class="field-header">
+        <span class="field-name">ai_model_target</span>
+        <span class="badge badge-optional">Optional</span>
+        <span class="badge badge-type">string | string[]</span>
+      </div>
+      <div class="field-description">Specific AI models this guide is tuned for.</div>
+      <div class="example"><code>ai_model_target:<br>  - "claude-3-5-sonnet"<br>  - "gpt-4o"</code></div>
+    </div>
+
+    <div class="field-card">
+      <div class="field-header">
+        <span class="field-name">extends</span>
+        <span class="badge badge-optional">Optional</span>
+        <span class="badge badge-type">string | string[]</span>
+      </div>
+      <div class="field-description">Inherit from other GUIDE.md files (local paths, registry names, or URLs).</div>
+      <div class="example"><code>extends: "./base-guide.md"<br># or<br>extends: ["typescript-strict", "./custom-guide.md"]</code></div>
+    </div>
+
+    <h2 id="nested-schemas">Nested Schemas</h2>
+
+    <h3>code_style</h3>
+    <div class="field-card">
+      <div class="field-description">Code style preferences for AI-generated code.</div>
+      <ul>
+        <li><code>max_line_length</code> (number, default: 100) — Max characters per line</li>
+        <li><code>indentation</code> (string, default: "2 spaces") — Use "tabs" or "N spaces"</li>
+        <li><code>naming_convention</code> (enum, default: "camelCase") — camelCase, snake_case, PascalCase, kebab-case, SCREAMING_SNAKE</li>
+        <li><code>max_function_lines</code> (number, optional) — Soft limit for function length</li>
+        <li><code>prefer_immutability</code> (boolean, default: false)</li>
+        <li><code>prefer_early_returns</code> (boolean, default: true)</li>
+      </ul>
+    </div>
+
+    <h3>guardrails</h3>
+    <div class="field-card">
+      <div class="field-description">Safety controls for AI behavior.</div>
+      <ul>
+        <li><code>no_hallucination</code> (boolean, default: true) — Don't invent APIs or types</li>
+        <li><code>cite_sources</code> (boolean, default: false) — Cite docs for unfamiliar APIs</li>
+        <li><code>scope_creep_prevention</code> (boolean, default: true) — Only modify referenced files</li>
+        <li><code>dry_run_on_destructive</code> (boolean, default: false) — Preview destructive ops</li>
+        <li><code>max_response_scope</code> (enum, default: "function") — file, function, class, module</li>
+      </ul>
+    </div>
+
+    <h3>testing</h3>
+    <div class="field-card">
+      <div class="field-description">Testing requirements.</div>
+      <ul>
+        <li><code>required</code> (boolean, default: false) — Tests required for changes</li>
+        <li><code>framework</code> (string, optional) — Testing framework name</li>
+        <li><code>coverage_threshold</code> (number, optional) — Minimum coverage % (0-100)</li>
+        <li><code>test_alongside_code</code> (boolean, default: false) — Generate tests with code</li>
+      </ul>
+    </div>
+
+    <h3>context</h3>
+    <div class="field-card">
+      <div class="field-description">Project structure context.</div>
+      <ul>
+        <li><code>entry_points</code> (string[]) — Key files for AI navigation</li>
+        <li><code>off_limits</code> (string[]) — Glob patterns AI should never modify</li>
+        <li><code>architecture_pattern</code> (enum, optional) — mvc, clean, hexagonal, layered, microservices, monolith, serverless, event-driven</li>
+        <li><code>state_management</code> (string, optional) — State management approach</li>
+      </ul>
+    </div>
+
+    <h2 id="inheritance">Inheritance</h2>
+    <p>The <code>extends</code> field allows GUIDE.md files to inherit from other files:</p>
+    
+    <ul>
+      <li><strong>Local files:</strong> <code>extends: "./base-guide.md"</code></li>
+      <li><strong>Registry modules:</strong> <code>extends: "typescript-strict"</code></li>
+      <li><strong>Remote URLs:</strong> <code>extends: "https://example.com/guide.md"</code></li>
+    </ul>
+
+    <p>Child values override parent values. Arrays are replaced, not merged. Nested objects are deeply merged.</p>
+
+    <h2 id="body-sections">Body Sections</h2>
+    <p>The markdown body should include these sections:</p>
+    
+    <ul>
+      <li><strong>Project Overview</strong> — Describe purpose, domain context, business rules</li>
+      <li><strong>Domain Vocabulary</strong> — Define key terms for consistent naming</li>
+      <li><strong>Non-Obvious Decisions</strong> — Explain unusual architectural choices</li>
+      <li><strong>What NOT to do</strong> — Anti-patterns specific to this codebase</li>
+    </ul>
+  </main>
+
+  <footer>
+    <div class="container">
+      <p>Generated from the GUIDE.md Zod schema. <a href="https://github.com/guidemd/linter">View on GitHub</a></p>
+    </div>
+  </footer>
+</body>
+</html>

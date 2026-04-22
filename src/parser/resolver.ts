@@ -76,7 +76,7 @@ export async function resolveInheritance(
 
   // Resolve extensions in reverse order so that earlier ones take precedence
   // If you have [base, middleware], middleware overrides base, and local overrides both.
-  for (const ext of extensions) {
+  for (const ext of extensions.reverse()) {
     // Runtime type check: skip non-string extends entries
     if (typeof ext !== "string") {
       errors.push({

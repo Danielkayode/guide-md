@@ -1,0 +1,40 @@
+name: python-fastapi
+description: FastAPI patterns with async-first design, Pydantic models, and dependency injection guidance
+version: "1.0.0"
+author: GuideMD Team
+license: MIT
+content:
+  guide_version: "1.0.0"
+  language: python
+  framework: fastapi
+  runtime: python@3.11
+  strict_typing: true
+  error_protocol: verbose
+  code_style:
+    max_line_length: 88
+    indentation: "4 spaces"
+    naming_convention: snake_case
+    max_function_lines: 60
+    prefer_immutability: false
+    prefer_early_returns: true
+  guardrails:
+    no_hallucination: true
+    scope_creep_prevention: true
+    dry_run_on_destructive: false
+    max_response_scope: function
+  context:
+    entry_points:
+      - app/main.py
+      - app/routers
+      - app/models
+    architecture_pattern: layered
+    off_limits:
+      - __pycache__/
+      - .venv/
+      - venv/
+      - .env
+  testing:
+    required: true
+    framework: pytest
+    coverage_threshold: 80
+  description: "FastAPI application with Pydantic models, async endpoints, and SQLAlchemy"

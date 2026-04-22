@@ -1,0 +1,60 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "GUIDE.md",
+  "scopeName": "text.guidemd",
+  "fileTypes": ["GUIDE.md"],
+  "patterns": [
+    {
+      "include": "#frontmatter"
+    },
+    {
+      "include": "#markdown"
+    }
+  ],
+  "repository": {
+    "frontmatter": {
+      "name": "meta.frontmatter.guidemd",
+      "begin": "^(---)\\s*$",
+      "beginCaptures": {
+        "1": {
+          "name": "punctuation.definition.frontmatter.begin.guidemd"
+        }
+      },
+      "end": "^(---)\\s*$",
+      "endCaptures": {
+        "1": {
+          "name": "punctuation.definition.frontmatter.end.guidemd"
+        }
+      },
+      "patterns": [
+        {
+          "contentName": "meta.embedded.block.yaml",
+          "begin": "(?=\\S)",
+          "end": "(?=^---\\s*$)",
+          "patterns": [
+            {
+              "include": "source.yaml"
+            }
+          ]
+        }
+      ]
+    },
+    "markdown": {
+      "name": "text.html.markdown",
+      "begin": "(?<=^---\\s*\\n)([\\s\\S]*)(?=\\z|(?=^---\\s*$))",
+      "patterns": [
+        {
+          "include": "text.html.markdown"
+        }
+      ]
+    },
+    "yaml": {
+      "name": "source.yaml",
+      "patterns": [
+        {
+          "include": "source.yaml"
+        }
+      ]
+    }
+  }
+}

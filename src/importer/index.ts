@@ -39,7 +39,11 @@ export function detectImportSource(filePath: string): ImportSourceType | null {
  * Parses CLAUDE.md format (XML-style blocks).
  */
 function parseClaudeFormat(content: string): { data: Partial<GuideMdFrontmatter>; instructions: string; unmapped: string[] } {
-  const data: Partial<GuideMdFrontmatter> = {};
+  const data: Partial<GuideMdFrontmatter> = {
+    guide_version: "1.0.0",
+    strict_typing: true,
+    error_protocol: "verbose",
+  };
   const unmapped: string[] = [];
   
   // Extract context block
@@ -53,11 +57,14 @@ function parseClaudeFormat(content: string): { data: Partial<GuideMdFrontmatter>
       data.project = projectName.trim();
     }
 
-    // Extract description
-    const descMatch = contextContent.match(/# Project:[^\n]*\n+([^\n#].*?)(?=\n##|\n<|$)/s);
-    const description = descMatch?.[1];
-    if (description) {
-      data.description = description.trim();
+    // Extract description (text after project name until ## or <)
+    const descMatch = contextContent.match(/# Project:[^\n]*\n+([\s\S]*?)(?=\n##|\n<|$)/);
+    if (descMatch?.[1]) {
+      const desc = descMatch[1].trim();
+      // Only use if it's not empty, doesn't start with #, and is at least 20 chars (schema requirement)
+      if (desc && !desc.startsWith("#") && desc.length >= 20) {
+        data.description = desc;
+      }
     }
 
     // Extract tech stack
@@ -247,24 +254,25 @@ function parseAgentsFormat(content: string): { data: Partial<GuideMdFrontmatter>
   const constraintsMatch = content.match(/## Constraints([\s\S]*?)(?=##|$)/);
   const constraints = constraintsMatch?.[1];
   if (constraints) {
-    const langMatch = constraints.match(/Language:\s*(.+)/);
+    // Handle both plain "Language:" and markdown bold "**Language**:" formats
+    const langMatch = constraints.match(/\*?\*?Language\*?\*?:\s*(.+)/);
     if (langMatch?.[1]) {
       const langs = langMatch[1].split(/,\s*/).map(l => l.trim().toLowerCase());
       data.language = langs.length === 1 ? langs[0] as any : langs as any;
     }
 
-    const runtimeMatch = constraints.match(/Runtime:\s*(.+)/);
+    const runtimeMatch = constraints.match(/\*?\*?Runtime\*?\*?:\s*(.+)/);
     if (runtimeMatch?.[1]) {
       data.runtime = runtimeMatch[1].trim();
     }
 
-    const frameworkMatch = constraints.match(/Framework:\s*(.+)/);
+    const frameworkMatch = constraints.match(/\*?\*?Framework\*?\*?:\s*(.+)/);
     if (frameworkMatch?.[1]) {
       const fw = frameworkMatch[1].split(/,\s*/).map(f => f.trim());
       data.framework = fw.length === 1 ? fw[0] : fw;
     }
 
-    const testingMatch = constraints.match(/Testing:\s*(.+)\s+with\s+(\d+)%/);
+    const testingMatch = constraints.match(/\*?\*?Testing\*?\*?:\s*(.+)\s+with\s+(\d+)%/);
     if (testingMatch?.[1]) {
       data.testing = {
         required: true,
@@ -274,7 +282,7 @@ function parseAgentsFormat(content: string): { data: Partial<GuideMdFrontmatter>
       };
     }
 
-    const archMatch = constraints.match(/Architecture:\s*(.+)/);
+    const archMatch = constraints.match(/\*?\*?Architecture\*?\*?:\s*(.+)/);
     if (archMatch?.[1]) {
       data.context = {
         architecture_pattern: archMatch[1].trim() as any,
@@ -470,12 +478,18 @@ export function importGuideFile(filePath: string): ImportResult {
  * @param outputPath Path to write the GUIDE.md file (default: "./GUIDE.md")
  * @returns Success status and message
  */
-export function writeImportedGuide(result: ImportResult, outputPath: string = "GUIDE.md"): { success: boolean; message: string } {
+export function writeImportedGuide(result: ImportResult, outputPath: string = "./GUIDE.md"): { success: boolean; message: string } {
   if (!result.success || !result.data) {
     return { success: false, message: "Cannot write: import was not successful" };
   }
   
   try {
+    // Ensure output directory exists
+    const outputDir = path.dirname(outputPath);
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
+    
     const yamlContent = matter.stringify(result.content, result.data as Record<string, unknown>);
     fs.writeFileSync(outputPath, yamlContent, "utf-8");
     return { success: true, message: `Written to ${outputPath}` };

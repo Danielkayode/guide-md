@@ -1,0 +1,17 @@
+src/
+tests/
+.github/
+*.test.ts
+*.spec.ts
+vitest.config.*
+.eslintrc*
+.prettierrc*
+.gitignore
+.turbo/
+.qodo/
+fixtures/
+examples/
+node_modules/
+*.log
+.DS_Store
+*.tgz

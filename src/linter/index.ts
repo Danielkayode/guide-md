@@ -226,22 +226,29 @@ export async function fixGuideFile(filePath: string): Promise<FixResult> {
   // ── Step 1: Parse ─────────────────────────────────────────────────────────
   const parsed = parseGuideFile(filePath);
 
+  // If parse failed due to empty frontmatter, start with empty data
+  // Otherwise return the error
+  let data: Record<string, unknown>;
   if (!parsed.success) {
-    return {
-      fixed: false,
-      file: filePath,
-      diagnostics: [{
-        severity: "error",
-        source: "schema",
-        field: "(file)",
-        message: parsed.error ?? "Unknown parse error",
-      }],
-      data: null,
-      appliedFixes: [],
-    };
+    if (parsed.error?.includes("No frontmatter found")) {
+      data = {};
+    } else {
+      return {
+        fixed: false,
+        file: filePath,
+        diagnostics: [{
+          severity: "error",
+          source: "schema",
+          field: "(file)",
+          message: parsed.error ?? "Unknown parse error",
+        }],
+        data: null,
+        appliedFixes: [],
+      };
+    }
+  } else {
+    data = { ...parsed.data };
   }
-
-  let data = { ...parsed.data };
 
   // ── Step 2: Try to fix missing required fields ───────────────────────────
   const fixes = applyFixes(data, filePath);

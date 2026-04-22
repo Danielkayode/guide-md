@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GUIDE.md CLI Commands</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      background: #f8fafc;
+    }
+    
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 0 20px;
+    }
+    
+    header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 60px 0;
+      text-align: center;
+    }
+    
+    header h1 {
+      font-size: 2.5rem;
+      margin-bottom: 10px;
+    }
+    
+    header p {
+      opacity: 0.9;
+      font-size: 1.2rem;
+    }
+    
+    nav {
+      background: #1a202c;
+      padding: 15px 0;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    
+    nav .container {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .nav-links {
+      display: flex;
+      gap: 30px;
+      list-style: none;
+    }
+    
+    .nav-links a {
+      color: #94a3b8;
+      text-decoration: none;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+    
+    .nav-links a:hover,
+    .nav-links a.active {
+      color: white;
+    }
+    
+    .logo {
+      font-size: 1.3rem;
+      font-weight: 700;
+      color: white;
+    }
+    
+    main {
+      background: white;
+      margin: 40px auto;
+      padding: 60px;
+      border-radius: 16px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    }
+    
+    h2 {
+      font-size: 1.8rem;
+      margin: 40px 0 20px;
+      color: #1a202c;
+      border-bottom: 2px solid #e2e8f0;
+      padding-bottom: 10px;
+    }
+    
+    h3 {
+      font-size: 1.3rem;
+      margin: 30px 0 15px;
+      color: #334155;
+    }
+    
+    .command-card {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 25px;
+      margin: 20px 0;
+    }
+    
+    .command-header {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      margin-bottom: 15px;
+      flex-wrap: wrap;
+    }
+    
+    .command-name {
+      font-family: 'Fira Code', monospace;
+      font-size: 1.2rem;
+      font-weight: 600;
+      color: #667eea;
+    }
+    
+    .command-args {
+      color: #64748b;
+      font-family: 'Fira Code', monospace;
+    }
+    
+    .command-description {
+      color: #475569;
+      margin-bottom: 15px;
+    }
+    
+    .flags {
+      margin-top: 15px;
+    }
+    
+    .flags h4 {
+      font-size: 0.9rem;
+      color: #64748b;
+      margin-bottom: 10px;
+      text-transform: uppercase;
+    }
+    
+    .flag {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      margin: 8px 0;
+      padding: 8px 12px;
+      background: white;
+      border-radius: 6px;
+    }
+    
+    .flag-name {
+      font-family: 'Fira Code', monospace;
+      font-size: 0.9rem;
+      color: #334155;
+      font-weight: 600;
+      min-width: 120px;
+    }
+    
+    .flag-description {
+      color: #64748b;
+      font-size: 0.9rem;
+    }
+    
+    pre {
+      background: #1e293b;
+      color: #e2e8f0;
+      padding: 20px;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin: 15px 0;
+    }
+    
+    pre code {
+      font-family: 'Fira Code', monospace;
+      font-size: 0.9rem;
+    }
+    
+    code {
+      font-family: 'Fira Code', monospace;
+      background: #f1f5f9;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+    
+    .example-output {
+      background: #1e293b;
+      color: #e2e8f0;
+      padding: 20px;
+      border-radius: 8px;
+      margin: 15px 0;
+      font-family: 'Fira Code', monospace;
+      font-size: 0.85rem;
+      overflow-x: auto;
+      white-space: pre;
+    }
+    
+    footer {
+      background: #0f172a;
+      color: #94a3b8;
+      padding: 40px 0;
+      text-align: center;
+      margin-top: 60px;
+    }
+    
+    footer a {
+      color: #667eea;
+      text-decoration: none;
+    }
+    
+    .category {
+      display: inline-block;
+      background: #e0e7ff;
+      color: #3730a3;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="container">
+      <div class="logo">📋 GUIDE.md</div>
+      <ul class="nav-links">
+        <li><a href="index.html">Home</a></li>
+        <li><a href="spec.html">Spec</a></li>
+        <li><a href="commands.html" class="active">Commands</a></li>
+        <li><a href="registry.html">Registry</a></li>
+        <li><a href="https://github.com/guidemd/linter">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <header>
+    <div class="container">
+      <h1>CLI Commands</h1>
+      <p>Complete reference for the @guidemd/linter CLI</p>
+    </div>
+  </header>
+
+  <main class="container">
+    <h2>Core Commands</h2>
+
+    <div class="command-card">
+      <div class="command-header">
+        <span class="command-name">guidemd lint</span>
+        <span class="command-args">[file]</span>
+        <span class="category">Core</span>
+      </div>
+      <div class="command-description">Validate a GUIDE.md file against the spec (handles inheritance).</div>
+      <pre><code>$ guidemd lint GUIDE.md</code></pre>
+      <div class="flags">
+        <h4>Flags</h4>
+        <div class="flag">
+          <span class="flag-name">--json</span>
+          <span class="flag-description">Output results as JSON for CI/tooling integration</span>
+        </div>
+        <div class="flag">
+          <span class="flag-name">--fix</span>
+          <span class="flag-description">Automatically fix fixable issues</span>
+        </div>
+        <div class="flag">
+          <span class="flag-name">--sync</span>
+          <span class="flag-description">Detect and sync drift between frontmatter and project files</span>
+        </div>
+        <div class="flag">
+          <span class="flag-name">--stats</span>
+          <span class="flag-description">Output Context Density Score</span>
+        </div>
+        <div class="flag">
+          <span class="flag-name">--skip-secret-scan</span>
+          <span class="flag-description">Skip scanning for secrets (not recommended)</span>
+        </div>
+      </div>
+      <div class="example-output">  ✔ GUIDE.md is valid
+  
+  This file is ready to be consumed by AI agents and MCP servers.</div>
+    </div>
+
+    <div class="command-card">
+      <div class="command-header">
+        <span class="command-name">guidemd init</span>
+      </div>
+      <div class="command-description">Scaffold a new GUIDE.md in the current directory with smart stack detection.</div>
+      <pre><code>$ guidemd init --force</code></pre>
+      <div class="flags">
+        <h4>Flags</h4>
+        <div class="flag">
+          <span class="flag-name">--force</span>
+          <span class="flag-description">Overwrite an existing GUIDE.md</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="command-card">
+      <div class="command-header">
+        <span class="command-name">guidemd sync</span>
+        <span class="command-args">[file]</span>
+        <span class="category">Core</span>
+      </div>
+      <div class="command-description">Detect and sync drift between frontmatter and actual project files.</div>
+      <pre><code>$ guidemd sync GUIDE.md --readme README.md</code></pre>
+      <div class="flags">
+        <h4>Flags</h4>
+        <div class="flag">
+          <span class="flag-name">-r, --readme &lt;path&gt;</span>
+          <span class="flag-description">Path to README.md for bi-directional sync</span>
+        </div>
+      </div>
+    </div>
+
+    <h2>Export & Import</h2>
+
+    <div class="command-card">
+      <div class="command-header">
+        <span class="command-name">guidemd export</span>
+        <span class="command-args">[file]</span>
+        <span class="category">Export</span>
+      </div>
+      <div class="command-description">Export GUIDE.md to other AI context formats.</div>
+      <pre><code>$ guidemd export GUIDE.md --target all</code></pre>
+      <div class="flags">
+        <h4>Flags</h4>
+        <div class="flag">
+          <span class="flag-name">-t, --target &lt;type&gt;</span>
+          <span class="flag-description">Target format: claude, cursor, windsurf, agents, copilot, aider, all</span>
+        </div>
+        <div class="flag">
+          <span class="flag-name">-o, --out &lt;dir&gt;</span>
+          <span class="flag-description">Output directory (default: .)</span>
+        </div>
+        <div class="flag">
+          <span class="flag-name">-m, --manifest</span>
+          <span class="flag-description">Generate MCP manifest.json</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="command-card">
+      <div class="command-header">
+        <span class="command-name">guidemd import</span>
+        <span class="command-args">&lt;file&gt;</span>
+        <span class="category">Import</span>
+      </div>
+      <div class="command-description">Reverse-parse an AI context file (CLAUDE.md, .cursorrules, etc.) into a GUIDE.md.</div>
+      <pre><code>$ guidemd import CLAUDE.md --out GUIDE.md</code></pre>
+      <div class="flags">
+        <h4>Flags</h4>
+        <div class="flag">
+          <span class="flag-name">-o, --out &lt;path&gt;</span>
+          <span class="flag-description">Output path for the generated GUIDE.md</span>
+        </div>
+        <div class="flag">
+          <span class="flag-name">--dry-run</span>
+          <span class="flag-description">Print to stdout instead of writing file</span>
+        </div>
+      </div>
+    </div>
+
+    <h2>Analysis Commands</h2>
+
+    <div class="command-card">
+      <div class="command-header">
+        <span class="command-name">guidemd info</span>
+        <span class="command-args">[file]</span>
+        <span class="category">Analysis</span>
+      </div>
+      <div class="command-description">Display a high-level health report of the project's AI-readiness.</div>
+      <pre><code>$ guidemd info GUIDE.md --json</code></pre>
+      <div class="flags">
+        <h4>Flags</h4>
+        <div class="flag">
+          <span class="flag-name">--json</span>
+          <span class="flag-description">Output results as JSON</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="command-card">
+      <div class="command-header">
+        <span class="command-name">guidemd optimize</span>
+        <span class="command-args">[file]</span>
+        <span class="category">Analysis</span>
+      </div>
+      <div class="command-description">Analyze GUIDE.md for token efficiency and structural improvements.</div>
+      <pre><code>$ guidemd optimize GUIDE.md --json</code></pre>
+      <div class="flags">
+        <h4>Flags</h4>
+        <div class="flag">
+          <span class="flag-name">--json</span>
+          <span class="flag-description">Output results as JSON</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="command-card">
+      <div class="command-header">
+        <span class="command-name">guidemd doctor</span>
+        <span class="command-args">[file]</span>
+        <span class="category">Analysis</span>
+      </div>
+      <div class="command-description">Deep static analysis to find logic conflicts and architectural drift.</div>
+      <pre><code>$ guidemd doctor GUIDE.md</code></pre>
+    </div>
+
+    <div class="command-card">
+      <div class="command-header">
+        <span class="command-name">guidemd verify</span>
+        <span class="command-args">[file]</span>
+        <span class="category">Analysis</span>
+      </div>
+      <div class="command-description">Verify GUIDE.md provides enough context for AI cold start.</div>
+      <pre><code>$ guidemd verify GUIDE.md --json</code></pre>
+      <div class="flags">
+        <h4>Flags</h4>
+        <div class="flag">
+          <span class="flag-name">--json</span>
+          <span class="flag-description">Output results as JSON</span>
+        </div>
+      </div>
+    </div>
+
+    <h2>Comparison</h2>
+
+    <div class="command-card">
+      <div class="command-header">
+        <span class="command-name">guidemd diff</span>
+        <span class="command-args">[file] [compare]</span>
+        <span class="category">Comparison</span>
+      </div>
+      <div class="command-description">Compare two GUIDE.md files and show what changed.</div>
+      <pre><code>$ guidemd diff GUIDE.md GUIDE.md.backup
+$ guidemd diff GUIDE.md --git
+$ guidemd diff GUIDE.md --git --breaking</code></pre>
+      <div class="flags">
+        <h4>Flags</h4>
+        <div class="flag">
+          <span class="flag-name">--git</span>
+          <span class="flag-description">Diff against git HEAD instead of a file</span>
+        </div>
+        <div class="flag">
+          <span class="flag-name">--breaking</span>
+          <span class="flag-description">Only show changes that affect AI agent behavior</span>
+        </div>
+        <div class="flag">
+          <span class="flag-name">--json</span>
+          <span class="flag-description">Output as JSON instead of formatted text</span>
+        </div>
+      </div>
+    </div>
+
+    <h2>Utility Commands</h2>
+
+    <div class="command-card">
+      <div class="command-header">
+        <span class="command-name">guidemd badge</span>
+        <span class="category">Utility</span>
+      </div>
+      <div class="command-description">Generate a Markdown badge for your README (Dynamic Grading).</div>
+      <pre><code>$ guidemd badge --file GUIDE.md</code></pre>
+    </div>
+
+    <div class="command-card">
+      <div class="command-header">
+        <span class="command-name">guidemd ci</span>
+        <span class="category">Utility</span>
+      </div>
+      <div class="command-description">Generate a GitHub Action workflow template.</div>
+      <pre><code>$ guidemd ci --write</code></pre>
+      <div class="flags">
+        <h4>Flags</h4>
+        <div class="flag">
+          <span class="flag-name">--write</span>
+          <span class="flag-description">Create .github/workflows/guidemd.yml directly</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="command-card">
+      <div class="command-header">
+        <span class="command-name">guidemd watch</span>
+        <span class="command-args">[file]</span>
+        <span class="category">Utility</span>
+      </div>
+      <div class="command-description">Watch mode: re-run lint on every save of GUIDE.md.</div>
+      <pre><code>$ guidemd watch GUIDE.md</code></pre>
+    </div>
+
+    <h2>Registry Commands</h2>
+
+    <div class="command-card">
+      <div class="command-header">
+        <span class="command-name">guidemd add</span>
+        <span class="command-args">&lt;module&gt;</span>
+        <span class="category">Registry</span>
+      </div>
+      <div class="command-description">Install a registry module into your GUIDE.md.</div>
+      <pre><code>$ guidemd add typescript-strict</code></pre>
+    </div>
+
+    <div class="command-card">
+      <div class="command-header">
+        <span class="command-name">guidemd list</span>
+        <span class="category">Registry</span>
+      </div>
+      <div class="command-description">List available registry modules.</div>
+      <pre><code>$ guidemd list</code></pre>
+    </div>
+  </main>
+
+  <footer>
+    <div class="container">
+      <p>GUIDE.md CLI Reference. <a href="https://github.com/guidemd/linter">View on GitHub</a></p>
+    </div>
+  </footer>
+</body>
+</html>

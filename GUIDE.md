@@ -9,7 +9,7 @@ strict_typing: true
 error_protocol: verbose
 ai_model_target:
   - "claude-sonnet-4-20250514"
-last_updated: "2026-04-21"
+last_updated: "2026-04-22"
 code_style:
   max_line_length: 100
   indentation: "2 spaces"
@@ -39,15 +39,21 @@ modules:
 
 This project is a comprehensive toolkit for the GUIDE.md specification — a YAML frontmatter standard designed to give AI agents structured context about software projects. The tool provides:
 
-- **Linting**: Validates GUIDE.md files against the official schema
+- **Linting**: Validates GUIDE.md files against the official schema with inheritance resolution
 - **Sync**: Detects drift between frontmatter and actual project state (package.json versions, missing entry points)
-- **Export**: Converts GUIDE.md to CLAUDE.md, .cursorrules, or .windsurfrules
+- **Doctor**: Deep static analysis for logic conflicts and architectural fingerprinting
+- **Verify**: Cold-start verification ensures AI can reconstruct your project from GUIDE.md alone
+- **Export**: Converts GUIDE.md to CLAUDE.md, .cursorrules, .windsurfrules, AGENTS.md, Copilot instructions, Aider config
+- **Import**: Reverse-parse existing AI context files back into GUIDE.md
 - **Optimize**: Analyzes token efficiency and suggests improvements
-- **Dashboard**: AI-readiness health reports with scoring
+- **Profile**: AI observability with token metrics, model compatibility, and section entropy
+- **Dashboard**: AI-readiness health reports with scoring (grade A-F)
 - **Guardian**: Git pre-commit hooks to keep GUIDE.md in sync
-- **MCP Server**: Exposes GUIDE.md as structured Tools and Resources for AI agents
-- **README Generator**: Translates GUIDE.md into beautiful human-readable README.md files with shields.io badges
+- **MCP Server**: Exposes GUIDE.md as structured Tools and Resources for AI agents via JSON-RPC
+- **README Generator**: Translates GUIDE.md into beautiful human-readable README.md with smart section mapping
+- **Back-Sync**: Bi-directional sync between README.md changes and GUIDE.md frontmatter
 - **Registry**: Context Hub for reusable Guide Modules (like `guidemd add typescript-strict`)
+- **Watcher**: Development mode with automatic re-linting on every save
 
 ## Domain Vocabulary
 
@@ -80,40 +86,51 @@ The registry uses a local cache directory (`~/.guidemd/modules/`) with GitHub fa
 | `guidemd lint [file]` | Validate GUIDE.md against schema |
 | `guidemd lint --fix` | Auto-fix missing required fields |
 | `guidemd lint --sync` | Detect and sync drift |
+| `guidemd lint --stats` | Show context density score |
 | `guidemd sync [file]` | Sync frontmatter with project state |
-| `guidemd init` | Scaffold a new GUIDE.md |
+| `guidemd init` | Scaffold a new GUIDE.md with smart detection |
 | `guidemd schema` | Print JSON Schema representation |
+| `guidemd verify [file]` | Cold-start verification (AI reconstructability) |
+| `guidemd watch [file]` | Watch mode: re-lint on every save |
+
+### Analysis Commands
+
+| Command | Description |
+|---------|-------------|
+| `guidemd doctor [file]` | Deep static analysis for logic conflicts |
+| `guidemd profile [file]` | AI observability: tokens, density, compatibility |
+| `guidemd profile --json-schema` | Export JSON Schema for IntelliSense |
+| `guidemd optimize [file]` | Analyze token efficiency |
+| `guidemd info [file]` | AI-readiness dashboard with scoring |
+| `guidemd badge` | Generate shields.io badge markdown |
 
 ### Export & Integration
 
 | Command | Description |
 |---------|-------------|
-| `guidemd export [file]` | Export to CLAUDE.md, .cursorrules, .windsurfrules |
-| `guidemd export -t claude` | Export to specific format only |
+| `guidemd export [file]` | Export to all AI context formats |
+| `guidemd export -t <target>` | Export to specific format (claude,cursor,windsurf,agents,copilot,aider) |
+| `guidemd export --manifest` | Generate MCP manifest.json |
+| `guidemd import <file>` | Reverse-parse AI context file to GUIDE.md |
 | `guidemd serve [file]` | Start MCP server (stdio JSON-RPC) |
 
-### Quality & Analysis
-
-| Command | Description |
-|---------|-------------|
-| `guidemd optimize [file]` | Analyze token efficiency |
-| `guidemd info [file]` | AI-readiness dashboard with scoring |
-| `guidemd badge` | Generate shields.io badge markdown |
-
-### Automation
-
-| Command | Description |
-|---------|-------------|
-| `guidemd install-hooks` | Install Guardian pre-commit hook |
-| `guidemd ci` | Print GitHub Actions workflow template |
-
-### Human Mirror (README Generation)
+### README Generation
 
 | Command | Description |
 |---------|-------------|
 | `guidemd generate-readme [file]` | Generate human-readable README.md |
 | `guidemd generate-readme --template <path>` | Use custom template |
 | `guidemd generate-readme --dry-run` | Print to stdout instead of file |
+| `guidemd back-sync-readme [file]` | Sync changes from README back to GUIDE.md |
+
+### Automation & CI
+
+| Command | Description |
+|---------|-------------|
+| `guidemd install-hooks` | Install Guardian pre-commit hook |
+| `guidemd install-hooks --uninstall` | Remove Guardian hook |
+| `guidemd ci` | Print GitHub Actions workflow template |
+| `guidemd ci --write` | Create .github/workflows/guidemd.yml directly |
 
 The generated README includes:
 - Project title and description
