@@ -38,7 +38,7 @@ Run `guidemd info` to see your project's health report:
 
 ## 🤝 Integration
 
-See [plugin.md](plugin/plugin.md) for detailed instructions on integrating with Cursor, Windsurf, Claude Code, and custom AI agents.
+See [plugin.md](DOCS/plugin/plugin.md) for detailed instructions on integrating with Cursor, Windsurf, Claude Code, and custom AI agents.
 
 ## 📜 License
 MIT
