@@ -89,9 +89,10 @@ export async function resolveInheritance(
     const normalizedExt = normalizeExtendsId(ext, basePath);
     
     if (visited.has(normalizedExt)) {
+      const errorChain = [...chain, ext];
       throw new CircularDependencyError(
-        `Circular extends chain detected: ${[...chain, ext].join(" -> ")}`,
-        [...chain, ext]
+        `Circular extends chain detected: ${errorChain.join(" -> ")}`,
+        errorChain
       );
     }
     

@@ -10,15 +10,15 @@ interface SecretPattern {
 
 const SECRET_PATTERNS: SecretPattern[] = [
   // OpenAI API keys
-  { name: "OpenAI API Key", pattern: /sk-[a-zA-Z0-9]{48,}/g },
+  { name: "OpenAI API Key", pattern: /sk-[a-zA-Z0-9]{48,}/ },
   // GitHub tokens
-  { name: "GitHub Token", pattern: /ghp_[a-zA-Z0-9]{36,}/g },
+  { name: "GitHub Token", pattern: /ghp_[a-zA-Z0-9]{36,}/ },
   // Slack tokens
-  { name: "Slack Token", pattern: /xox[baprs]-[a-zA-Z0-9-]+/g },
+  { name: "Slack Token", pattern: /xox[baprs]-[a-zA-Z0-9-]+/ },
   // AWS Access Key ID
-  { name: "AWS Access Key", pattern: /AKIA[0-9A-Z]{16}/g },
+  { name: "AWS Access Key", pattern: /AKIA[0-9A-Z]{16}/ },
   // Generic .env style patterns (API_KEY=value, etc.)
-  { name: "Environment Variable Secret", pattern: /(?:API_KEY|SECRET_KEY|AUTH_TOKEN|ACCESS_TOKEN|PRIVATE_KEY|PASSWORD|SECRET)=([^\s"']+)/gi, maskGroup: 1 },
+  { name: "Environment Variable Secret", pattern: /(?:API_KEY|SECRET_KEY|AUTH_TOKEN|ACCESS_TOKEN|PRIVATE_KEY|PASSWORD|SECRET)=([^\s"']{1,200})/i, maskGroup: 1 },
 ];
 
 const SENSITIVE_YAML_KEYS = [
@@ -120,7 +120,8 @@ export function scanForSecrets(content: string, filePath: string): SecretScanRes
     
     // Check against secret patterns
     for (const { name, pattern, maskGroup } of SECRET_PATTERNS) {
-      const regex = new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : pattern.flags + "g");
+      const flags = (pattern.flags || "") + "g";
+      const regex = new RegExp(pattern.source, flags);
       let match;
       while ((match = regex.exec(line)) !== null) {
         const rawValue = maskGroup ? match[maskGroup] : match[0];

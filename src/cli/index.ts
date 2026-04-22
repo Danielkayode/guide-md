@@ -2,7 +2,6 @@
 import { program } from "commander";
 import chalk from "chalk";
 import { lintGuideFile, fixGuideFile, LintResult, syncGuideFile, detectDrift, detectLanguage } from "../linter/index.js";
-import { detectParadigm } from "../linter/sync.js";
 import { GuideMdSchema, GuideMdFrontmatter } from "../schema/index.js";
 import { parseGuideFile } from "../parser/index.js";
 import { exportGuide, generateBadge, ExportTarget, exportMcpManifest } from "../exporter/index.js";
@@ -24,6 +23,8 @@ import { diffGuides, diffGit, formatDiff, formatDiffJson, DiffOptions } from "..
 import fs from "node:fs";
 import path from "node:path";
 import matter from "gray-matter";
+import { zodToJsonSchema } from "zod-to-json-schema";
+import { detectParadigm } from "../linter/sync.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const ICONS = {
@@ -120,7 +121,7 @@ strict_typing: true
 error_protocol: verbose
 ai_model_target:
 - "claude-sonnet-4-20250514"
-last_updated: "${new Date().toISOString().split("T")[0]}"
+last_updated: "{{CURRENT_DATE}}"
 code_style:
   max_line_length: 100
   indentation: "2 spaces"
@@ -169,6 +170,7 @@ interface LintOptions {
 }
 
 interface InitOptions {
+  json: any;
   force?: boolean;
 }
 
@@ -204,11 +206,6 @@ program
       process.exit(1);
     }
 
-    // Secret Scan Warning (before inheritance resolution)
-    if (!opts.skipSecretScan && !opts.json) {
-      // Secret scanning happens inside lintGuideFile now
-    }
-
     // Resolve Inheritance
     let resolveResult: ResolveResult | undefined;
     let circularError: CircularDependencyError | undefined;
@@ -226,14 +223,20 @@ program
     
     // Handle circular dependency as a diagnostic
     if (circularError) {
-      const result = await lintGuideFile(target, { skipSecretScan: opts.skipSecretScan });
-      result.valid = false;
-      result.diagnostics.push({
-        severity: "error" as const,
-        source: "schema" as const,
-        field: "extends",
-        message: circularError.message
-      });
+      const lintResult = await lintGuideFile(target, { skipSecretScan: opts.skipSecretScan });
+      const result: LintResult = {
+        ...lintResult,
+        valid: false,
+        diagnostics: [
+          ...lintResult.diagnostics,
+          {
+            severity: "error" as const,
+            source: "schema" as const,
+            field: "extends",
+            message: circularError.message
+          }
+        ]
+      };
       
       if (opts.json) {
         console.log(JSON.stringify(result, null, 2));
@@ -246,10 +249,22 @@ program
       return;
     }
     
-    const resolvedData = resolveResult!.data;
+    if (!resolveResult) {
+      const result = await lintGuideFile(target, { skipSecretScan: opts.skipSecretScan });
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+        process.exit(1);
+        return;
+      }
+      printDiagnostics(result);
+      exitSummary(result);
+      return;
+    }
+
+    const resolvedData = resolveResult.data;
 
     // Surface resolution errors as diagnostics
-    const resolveDiagnostics = resolveResult!.errors.map((err: ResolutionError) => ({
+    const resolveDiagnostics = resolveResult.errors.map((err: ResolutionError) => ({
       severity: "error" as const,
       source: "schema" as const,
       field: "extends",
@@ -258,7 +273,7 @@ program
 
     // 1. Handle Sync if requested
     if (opts.sync) {
-      const syncResult = await syncGuideFile(resolvedData as unknown as GuideMdFrontmatter, target);
+      const syncResult = await syncGuideFile(resolvedData, target);
       if (syncResult.synced) {
         const originalContent = fs.readFileSync(target, "utf-8");
         const matterParsed = matter(originalContent);
@@ -312,29 +327,37 @@ program
       printDiagnostics(finalResult);
       exitSummary(finalResult);
     } else {
-      const result = await lintGuideFile(target, { skipSecretScan: opts.skipSecretScan });
+      const lintResult = await lintGuideFile(target, { skipSecretScan: opts.skipSecretScan });
+      
+      let allDiagnostics = [...lintResult.diagnostics];
+      let valid = lintResult.valid;
       
       // Add resolution errors to diagnostics
       if (resolveDiagnostics.length > 0) {
-        result.valid = false;
-        result.diagnostics.push(...resolveDiagnostics);
+        valid = false;
+        allDiagnostics = [...allDiagnostics, ...resolveDiagnostics];
       }
       
       // We should validate the resolved data instead of just the local data
       const schemaValidation = GuideMdSchema.safeParse(resolvedData);
       
       if (!schemaValidation.success) {
-        // Map Zod errors to our Diagnostic format
-        const diagnostics = schemaValidation.error.errors.map(err => ({
+        const schemaDiagnostics = schemaValidation.error.errors.map(err => ({
           field: err.path.join("."),
           message: err.message,
           severity: "error" as const,
           source: "schema" as const,
-          received: (err as any).received
+          received: typeof (err as { received?: unknown }).received !== "undefined" ? (err as { received?: unknown }).received : undefined
         }));
-        result.valid = false;
-        result.diagnostics.push(...diagnostics);
+        valid = false;
+        allDiagnostics = [...allDiagnostics, ...schemaDiagnostics];
       }
+
+      const result: LintResult = {
+        ...lintResult,
+        valid,
+        diagnostics: allDiagnostics,
+      };
 
       if (opts.json) {
         let output: any = result;
@@ -385,7 +408,13 @@ program
     }
 
     const readmeContent = fs.readFileSync(readmePath, "utf-8");
-    const newData = backSyncFromReadme(readmeContent, parsedGuide.data as any);
+    const guideData = GuideMdSchema.safeParse(parsedGuide.data);
+    if (!guideData.success) {
+      console.log(`  ${ICONS.error} ${chalk.red("GUIDE.md failed schema validation:")}`);
+      guideData.error.errors.forEach(err => console.log(`    ${chalk.dim("•")} ${err.path.join(".")}: ${err.message}`));
+      process.exit(1);
+    }
+    const newData = backSyncFromReadme(readmeContent, guideData.data);
 
     // Check if anything changed
     const changed = JSON.stringify(newData) !== JSON.stringify(parsedGuide.data);
@@ -572,7 +601,7 @@ program
     }
 
     const errors = report.issues.filter(i => i.severity === "error");
-    const warnings = report.issues.filter(i => i.severity === "warning" || i.severity === ("low" as any));
+    const warnings = report.issues.filter(i => i.severity === "warning");
 
     if (errors.length > 0) {
       console.log(chalk.red.bold(`  Critical Conflicts (${errors.length})`));
@@ -709,7 +738,9 @@ program
       const readmeContent = fs.readFileSync(readmePath, "utf-8");
       const parsedGuide = parseGuideFile(target);
       if (parsedGuide.success) {
-        const newData = backSyncFromReadme(readmeContent, parsedGuide.data as any);
+        const guideData = GuideMdSchema.safeParse(parsedGuide.data);
+        if (!guideData.success) return; // Skip back-sync if guide is invalid
+        const newData = backSyncFromReadme(readmeContent, guideData.data);
         const changed = JSON.stringify(newData) !== JSON.stringify(parsedGuide.data);
 
         if (changed) {
@@ -757,7 +788,12 @@ program
         const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
         if (pkg.name) projectName = pkg.name.replace(/^@[^/]+\//, "");
       }
-    } catch {}
+    } catch (err) {
+      // Non-fatal: fallback to directory name if package.json can't be read
+      if (!opts.json) {
+        console.log(chalk.yellow(`  ${ICONS.warning} Could not read package.json: ${err instanceof Error ? err.message : String(err)}`));
+      }
+    }
     
     // Generate smart template with detected values
     const smartTemplate = generateSmartTemplate({
@@ -767,7 +803,9 @@ program
       paradigm: detectedParadigm,
     });
     
-    fs.writeFileSync(dest, smartTemplate, "utf-8");
+    const today = new Date().toISOString().split("T")[0] ?? "unknown";
+    const finalTemplate = smartTemplate.replace(/\{\{CURRENT_DATE\}\}/g, today);
+    fs.writeFileSync(dest, finalTemplate, "utf-8");
     
     console.log(`  ${ICONS.success} ${chalk.green("Created GUIDE.md")}`);
     
@@ -975,7 +1013,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '18'
 
       - name: Install @guidemd/linter
         run: npm install -g @guidemd/linter
@@ -983,6 +1021,7 @@ jobs:
       - name: Lint GUIDE.md
         id: lint
         run: |
+          # SECURITY: Ensure GUIDE.md path is validated before use in production CI
           if ! guidemd lint GUIDE.md --json > lint-results.json 2>&1; then
             echo "Lint failed"
             echo "failed=true" >> $GITHUB_OUTPUT
@@ -1626,42 +1665,42 @@ The spec.html file now reflects the current Zod schema.
   });
 
 function generateSpecHtml(): string {
-  // Get schema shape
-  const shape = (GuideMdSchema as any).shape;
-  
+  const jsonSchema = zodToJsonSchema(GuideMdSchema, { target: "jsonSchema7" }) as {
+    required?: string[];
+    properties?: Record<string, {
+      type?: string;
+      description?: string;
+      default?: unknown;
+      anyOf?: Array<{ description?: string }>;
+    }>;
+  };
+
+  const requiredFieldsSet = new Set(jsonSchema.required ?? []);
+  const properties = jsonSchema.properties ?? {};
   const requiredFields: string[] = [];
   const optionalFields: string[] = [];
 
-  // Sort fields into required and optional
-  for (const [key, value] of Object.entries(shape)) {
-    const isOptional = (value as any).isOptional?.() ?? false;
-    if (isOptional) {
-      optionalFields.push(key);
+  for (const field of Object.keys(properties)) {
+    if (requiredFieldsSet.has(field)) {
+      requiredFields.push(field);
     } else {
-      requiredFields.push(key);
+      optionalFields.push(field);
     }
   }
 
-  // Generate field documentation
   const generateFieldDoc = (field: string) => {
-    const fieldSchema = shape[field];
-    const description = (fieldSchema as any).description || "";
-    const defaultValue = (fieldSchema as any).defaultValue?.() ?? null;
-    
-    let type = "any";
-    if ((fieldSchema as any)._def?.typeName === "ZodString") type = "string";
-    else if ((fieldSchema as any)._def?.typeName === "ZodNumber") type = "number";
-    else if ((fieldSchema as any)._def?.typeName === "ZodBoolean") type = "boolean";
-    else if ((fieldSchema as any)._def?.typeName === "ZodArray") type = "array";
-    else if ((fieldSchema as any)._def?.typeName === "ZodObject") type = "object";
-    else if ((fieldSchema as any)._def?.typeName === "ZodEnum") type = "enum";
-    else if ((fieldSchema as any)._def?.typeName === "ZodUnion") type = "union";
+    const prop = properties[field];
+    if (!prop) return "";
+
+    const type = prop.type ?? "any";
+    const description = prop.description ?? "";
+    const defaultValue = prop.default ?? null;
 
     return `
     <div class="field-card">
       <div class="field-header">
         <span class="field-name">${field}</span>
-        <span class="badge badge-${requiredFields.includes(field) ? "required" : "optional"}">${requiredFields.includes(field) ? "Required" : "Optional"}</span>
+        <span class="badge badge-${requiredFieldsSet.has(field) ? "required" : "optional"}">${requiredFieldsSet.has(field) ? "Required" : "Optional"}</span>
         <span class="badge badge-type">${type}</span>
       </div>
       ${description ? `<div class="field-description">${description}</div>` : ""}
@@ -1763,7 +1802,3 @@ function generateSpecHtml(): string {
 }
 
 program.parse();
-
-function description(arg0: string) {
-  throw new Error("Function not implemented.");
-}

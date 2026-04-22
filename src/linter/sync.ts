@@ -4,6 +4,21 @@ import ts from "typescript";
 import { GuideMdFrontmatter } from "../schema/index.js";
 import { init } from "es-module-lexer";
 
+// Performance tuning constants for paradigm detection
+// These balance accuracy vs. analysis time for large codebases
+const PARADIGM_SAMPLE_SIZE = 50; // Maximum files to sample for detection
+const PARADIGM_ANALYSIS_CAP = 30; // Cap at 30 for actual AST analysis (performance limit)
+const PARADIGM_ENTRY_PRIORITY = 10; // Number of entry point files to prioritize
+
+// Paradigm detection scoring thresholds
+const PARADIGM_OOP_CLASS_THRESHOLD = 3; // Minimum class declarations to strongly indicate OOP
+const PARADIGM_OOP_DECORATOR_THRESHOLD = 5; // Minimum decorators to strongly indicate OOP
+const PARADIGM_OOP_DOMINANCE_MULTIPLIER = 1.5; // OOP score must exceed functional score by this factor
+const PARADIGM_FUNCTIONAL_HOOK_THRESHOLD = 3; // Minimum React hooks to strongly indicate functional
+const PARADIGM_FUNCTIONAL_DOMINANCE_MULTIPLIER = 1.2; // Functional score must exceed OOP score by this factor
+const PARADIGM_READDIR_MAX_DEPTH = 10; // Max directory depth for recursive scanning to avoid node_modules hang
+const PARADIGM_IGNORED_DIRS = new Set(["node_modules", "dist", ".git", ".next", ".nuxt", "build", "coverage"]);
+
 export interface Drift {
   field: string;
   actual: string;
@@ -20,7 +35,23 @@ export interface SyncResult {
 /**
  * Detects drift between GUIDE.md frontmatter and the actual project state.
  */
-export async function detectDrift(data: GuideMdFrontmatter, filePath: string): Promise<Drift[]> {
+function getFrameworks(data: Record<string, unknown>): string[] {
+  const fw = data.framework;
+  if (Array.isArray(fw) && fw.every((f): f is string => typeof f === "string")) return fw;
+  if (typeof fw === "string") return [fw];
+  return [];
+}
+
+function getEntryPoints(data: Record<string, unknown>): string[] {
+  const ctx = data.context;
+  if (ctx && typeof ctx === "object" && !Array.isArray(ctx)) {
+    const eps = (ctx as Record<string, unknown>).entry_points;
+    if (Array.isArray(eps) && eps.every((e): e is string => typeof e === "string")) return eps;
+  }
+  return [];
+}
+
+export async function detectDrift(data: Record<string, unknown>, filePath: string): Promise<Drift[]> {
   const drifts: Drift[] = [];
   const projectRoot = path.dirname(filePath);
 
@@ -30,11 +61,7 @@ export async function detectDrift(data: GuideMdFrontmatter, filePath: string): P
     const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
     const deps = { ...pkg.dependencies, ...pkg.devDependencies };
 
-    const frameworks = Array.isArray(data.framework) 
-      ? data.framework 
-      : data.framework 
-        ? [data.framework] 
-        : [];
+    const frameworks = getFrameworks(data);
 
     frameworks.forEach((fw) => {
       const [name, version] = fw.split("@");
@@ -53,7 +80,7 @@ export async function detectDrift(data: GuideMdFrontmatter, filePath: string): P
   }
 
   // 2. Dependency Check (Strict Typing -> tsconfig.json)
-  if (data.strict_typing) {
+  if (data.strict_typing === true) {
     const tsConfigPath = path.join(projectRoot, "tsconfig.json");
     if (!fs.existsSync(tsConfigPath)) {
       drifts.push({
@@ -66,7 +93,7 @@ export async function detectDrift(data: GuideMdFrontmatter, filePath: string): P
   }
 
   // 3. Folder Mapping (Entry Points & Structural Sync)
-  const entryPoints = data.context?.entry_points || [];
+  const entryPoints = getEntryPoints(data);
   entryPoints.forEach((ep) => {
     const epPath = path.resolve(projectRoot, ep);
     if (!fs.existsSync(epPath)) {
@@ -100,7 +127,7 @@ export async function detectDrift(data: GuideMdFrontmatter, filePath: string): P
 
   // 4. Paradigm Detection (Async AST-based)
   const detectedParadigm = await detectParadigm(projectRoot);
-  const currentParadigm = (data as any).paradigm;
+  const currentParadigm = typeof data.paradigm === "string" ? data.paradigm : undefined;
   // Only report drift if paradigm is explicitly set and differs from detected
   if (detectedParadigm && currentParadigm && detectedParadigm !== currentParadigm) {
     drifts.push({
@@ -117,60 +144,107 @@ export async function detectDrift(data: GuideMdFrontmatter, filePath: string): P
 /**
  * Automatically syncs GUIDE.md frontmatter with the project state.
  */
-export async function syncGuideFile(data: GuideMdFrontmatter, filePath: string): Promise<SyncResult> {
+export async function syncGuideFile(data: Record<string, unknown>, filePath: string): Promise<SyncResult> {
   const drifts = await detectDrift(data, filePath);
-  const newData = { ...data } as any;
+  const newData: Record<string, unknown> = { ...data };
   const projectRoot = path.dirname(filePath);
+  let hasModifications = false;
 
   drifts.forEach((drift) => {
     // Sync framework versions
     if (drift.field === "framework") {
       const [name] = drift.expected.split("@");
       const actualVersion = drift.actual.split("@")[1];
+      const fw = newData.framework;
       
-      if (Array.isArray(newData.framework)) {
-        newData.framework = newData.framework.map((fw: string) => 
-          fw.startsWith(name + "@") ? `${name}@${actualVersion}` : fw
-        );
-      } else if (typeof newData.framework === "string" && newData.framework.startsWith(name + "@")) {
+      if (Array.isArray(fw) && fw.every((f): f is string => typeof f === "string")) {
+        const oldFramework = JSON.stringify(fw);
+        newData.framework = fw.map((f) => f.startsWith(name + "@") ? `${name}@${actualVersion}` : f);
+        if (JSON.stringify(newData.framework) !== oldFramework) hasModifications = true;
+      } else if (typeof fw === "string" && fw.startsWith(name + "@")) {
         newData.framework = `${name}@${actualVersion}`;
+        hasModifications = true;
       }
     }
 
     // Sync strict_typing
     if (drift.field === "strict_typing" && drift.actual === "missing tsconfig.json") {
-      newData.strict_typing = false;
+      if (newData.strict_typing !== false) {
+        newData.strict_typing = false;
+        hasModifications = true;
+      }
     }
 
     // Sync entry_points
     if (drift.field === "context.entry_points") {
+      const ctx = newData.context;
+      const contextObj = (ctx && typeof ctx === "object" && !Array.isArray(ctx)) ? ctx as Record<string, unknown> : {};
       if (drift.actual === "not found") {
-        if (newData.context?.entry_points) {
-          newData.context.entry_points = newData.context.entry_points.filter((ep: string) => ep !== drift.expected);
+        const eps = contextObj.entry_points;
+        if (Array.isArray(eps) && eps.every((e): e is string => typeof e === "string")) {
+          const oldLength = eps.length;
+          const filtered = eps.filter((ep) => ep !== drift.expected);
+          if (filtered.length !== oldLength) {
+            contextObj.entry_points = filtered;
+            newData.context = contextObj;
+            hasModifications = true;
+          }
         }
       } else if (drift.expected === "missing") {
-        newData.context = newData.context || {};
-        newData.context.entry_points = newData.context.entry_points || [];
-        if (!newData.context.entry_points.includes(drift.actual)) {
-          newData.context.entry_points.push(drift.actual);
+        const eps = contextObj.entry_points;
+        const epsArr = Array.isArray(eps) && eps.every((e): e is string => typeof e === "string") ? eps : [];
+        if (!epsArr.includes(drift.actual)) {
+          epsArr.push(drift.actual);
+          contextObj.entry_points = epsArr;
+          newData.context = contextObj;
+          hasModifications = true;
         }
       }
     }
 
     // Sync paradigm
     if (drift.field === "paradigm") {
-      newData.paradigm = drift.actual;
+      if (newData.paradigm !== drift.actual) {
+        newData.paradigm = drift.actual;
+        hasModifications = true;
+      }
     }
-
-    // Sync last_updated if anything changed
-    newData.last_updated = new Date().toISOString().split("T")[0];
   });
 
+  // Sync last_updated only if actual modifications occurred
+  if (hasModifications) {
+    newData.last_updated = new Date().toISOString().split("T")[0];
+  }
+
   return {
-    synced: drifts.length > 0,
+    synced: hasModifications,
     drifts,
-    data: newData,
+    data: newData as GuideMdFrontmatter,
   };
+}
+
+/**
+ * Recursively reads a directory up to a maximum depth, skipping ignored directories.
+ * Returns absolute file paths.
+ */
+function readdirRecursive(dir: string, maxDepth: number, ignoreSet: Set<string>, currentDepth = 0): string[] {
+  if (currentDepth >= maxDepth) return [];
+  const results: string[] = [];
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (ignoreSet.has(entry.name)) continue;
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        results.push(...readdirRecursive(fullPath, maxDepth, ignoreSet, currentDepth + 1));
+      } else if (entry.isFile()) {
+        results.push(fullPath);
+      }
+    }
+  } catch {
+    // Skip unreadable directories
+  }
+  return results;
 }
 
 function findPackageJson(startPath: string): string | null {
@@ -294,20 +368,19 @@ function analyzeFileWithAst(filePath: string): Partial<ParadigmScore> {
 export async function detectParadigm(projectRoot: string): Promise<"oop" | "functional" | null> {
   try {
     const allFiles: string[] = [];
-    const files = fs.readdirSync(projectRoot, { recursive: true });
+    const files = readdirRecursive(projectRoot, PARADIGM_READDIR_MAX_DEPTH, PARADIGM_IGNORED_DIRS);
     
     // Collect all JS/TS files
     for (const f of files) {
-      if (typeof f !== "string") continue;
       if (![".ts", ".js", ".tsx", ".jsx"].some(ext => f.endsWith(ext))) continue;
-      if (f.includes("node_modules") || f.includes("dist") || f.includes(".d.ts")) continue;
-      allFiles.push(path.join(projectRoot, f));
+      if (f.includes(".d.ts")) continue;
+      allFiles.push(f);
     }
     
     if (allFiles.length === 0) return null;
     
     // Weighted sampling: prioritize entry points and diverse locations
-    const sampleSize = Math.min(allFiles.length, 50);
+    const sampleSize = Math.min(allFiles.length, PARADIGM_SAMPLE_SIZE);
     const sample: string[] = [];
     
     // Priority 1: src/index and main entry points
@@ -315,13 +388,13 @@ export async function detectParadigm(projectRoot: string): Promise<"oop" | "func
       /src\/(index|main)\.(ts|js)x?$/.test(f) ||
       /app\/(page|layout)\.(ts|js)x?$/.test(f)
     );
-    sample.push(...entryPoints.slice(0, 10));
+    sample.push(...entryPoints.slice(0, PARADIGM_ENTRY_PRIORITY));
     
     // Priority 2: Files in src/ directory (not tests)
+    const testPatterns = /(\.test\.|\.spec\.|__tests__|__mocks__)/;
     const srcFiles = allFiles.filter(f => 
       f.includes("/src/") && 
-      !f.includes(".test.") && 
-      !f.includes(".spec.")
+      !testPatterns.test(f)
     );
     
     // Priority 3: Fill remaining with diverse selection
@@ -354,7 +427,7 @@ export async function detectParadigm(projectRoot: string): Promise<"oop" | "func
     let totalDecorators = 0;
     let totalHooks = 0;
     
-    for (const file of sample.slice(0, 30)) { // Cap at 30 for performance
+    for (const file of sample.slice(0, PARADIGM_ANALYSIS_CAP)) { // Performance cap for AST analysis
       const scores = analyzeFileWithAst(file);
       
       // Weight the scores: classes and decorators strongly indicate OOP
@@ -369,12 +442,12 @@ export async function detectParadigm(projectRoot: string): Promise<"oop" | "func
     
     // Decision logic with confidence thresholds
     // Strong OOP: multiple classes or decorators found
-    if (totalClasses >= 3 || totalDecorators >= 5 || totalOop > totalFunc * 1.5) {
+    if (totalClasses >= PARADIGM_OOP_CLASS_THRESHOLD || totalDecorators >= PARADIGM_OOP_DECORATOR_THRESHOLD || totalOop > totalFunc * PARADIGM_OOP_DOMINANCE_MULTIPLIER) {
       return "oop";
     }
     
     // Strong Functional: more hooks/arrow functions than classes
-    if (totalHooks >= 3 || totalFunc >= totalOop * 1.2) {
+    if (totalHooks >= PARADIGM_FUNCTIONAL_HOOK_THRESHOLD || totalFunc >= totalOop * PARADIGM_FUNCTIONAL_DOMINANCE_MULTIPLIER) {
       return "functional";
     }
     

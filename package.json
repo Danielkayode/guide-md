@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/cli/index.js",
   "bin": {
-    "guidemd": "./dist/cli/index.js"
+    "guidemd": "dist/cli/index.js"
   },
   "files": [
     "dist",

@@ -550,8 +550,8 @@ describe("schema", () => {
     });
   });
 
-  describe("strict mode", () => {
-    it("should reject unknown fields in strict mode", () => {
+  describe("passthrough mode", () => {
+    it("should allow unknown fields for forward compatibility", () => {
       const data = {
         guide_version: "1.0.0",
         project: "test-project",
@@ -563,9 +563,9 @@ describe("schema", () => {
 
       const result = GuideMdSchema.safeParse(data);
 
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error.errors[0].message).toContain("Unrecognized key");
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect((result.data as Record<string, unknown>).unknown_field).toBe("value");
       }
     });
   });

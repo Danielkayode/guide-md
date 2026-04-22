@@ -43,7 +43,7 @@ export { syncGuideFile, detectDrift };
 
 interface WarningRule {
   field: string;
-  check: (data: Record<string, unknown>, filePath: string) => boolean;
+  check: (data: Record<string, unknown>, filePath: string, content?: string) => boolean;
   message: string;
 }
 
@@ -87,8 +87,9 @@ const WARNING_RULES: WarningRule[] = [
   {
     field: "last_updated",
     check: (data, filePath) => {
-      if (!data.last_updated) return true;
-      const updated = new Date(data.last_updated as string);
+      if (!data.last_updated || typeof data.last_updated !== "string") return true;
+      const updated = new Date(data.last_updated);
+      if (Number.isNaN(updated.getTime())) return true; // Invalid date, let schema validation handle it
       const now = new Date();
       const diffDays = (now.getTime() - updated.getTime()) / (1000 * 60 * 60 * 24);
       return diffDays > 180;
@@ -98,8 +99,8 @@ const WARNING_RULES: WarningRule[] = [
   },
   {
     field: "file.length",
-    check: (data, filePath) => {
-      const content = fs.readFileSync(filePath, 'utf-8');
+    check: (data, filePath, content) => {
+      if (!content) return false; // No content available to check; skip
       const lines = content.split('\n').length;
       return lines > 200;
     },
@@ -129,8 +130,14 @@ export async function lintGuideFile(filePath: string, options: LintOptions = {})
         const secretDiagnostics = violationsToDiagnostics(secretScan);
         diagnostics.push(...secretDiagnostics);
       }
-    } catch {
-      // If we can't read the file for secret scanning, it will fail in parse anyway
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      diagnostics.push({
+        severity: "warning",
+        source: "warning",
+        field: "(secret-scan)",
+        message: `Could not read file for secret scanning: ${reason}`,
+      });
     }
   }
 
@@ -161,7 +168,7 @@ export async function lintGuideFile(filePath: string, options: LintOptions = {})
     }));
 
     // Still run warnings against raw data for partial guidance
-    const warnings = await runWarnings(parsed.data, filePath);
+    const warnings = await runWarnings(parsed.data, filePath, parsed.content);
     const allDiagnostics = [...diagnostics, ...zodErrors, ...warnings];
     return {
       valid: false,
@@ -173,7 +180,7 @@ export async function lintGuideFile(filePath: string, options: LintOptions = {})
   }
 
   // ── Step 4: Soft warnings ─────────────────────────────────────────────────
-  const warnings = await runWarnings(result.data, filePath);
+  const warnings = await runWarnings(result.data, filePath, parsed.content);
   const allDiagnostics = [...diagnostics, ...warnings];
 
   // Valid if no errors across all diagnostics (including secret-scan)
@@ -191,18 +198,25 @@ export async function lintGuideFile(filePath: string, options: LintOptions = {})
 /**
  * Runs soft-warning rules against the data object.
  */
-async function runWarnings(data: Record<string, unknown>, filePath: string): Promise<Diagnostic[]> {
-  const warnings = WARNING_RULES.filter((rule) => rule.check(data, filePath)).map((rule) => ({
-    severity: "warning" as const,
-    source: "warning" as const,
-    field: rule.field,
-    message: rule.message,
-  }));
+async function runWarnings(data: Record<string, unknown>, filePath: string, content?: string): Promise<Diagnostic[]> {
+  const diagnostics: Diagnostic[] = [];
+
+  for (const rule of WARNING_RULES) {
+    const triggered = rule.check(data, filePath, content);
+    if (triggered) {
+      diagnostics.push({
+        severity: "warning",
+        source: "warning",
+        field: rule.field,
+        message: rule.message,
+      });
+    }
+  }
 
   // Add drift detection warnings
   try {
-    const drifts = await detectDrift(data as unknown as GuideMdFrontmatter, filePath);
-    warnings.push(...drifts.map(d => ({
+    const drifts = await detectDrift(data, filePath);
+    diagnostics.push(...drifts.map(d => ({
       severity: "warning" as const,
       source: "warning" as const,
       field: d.field,
@@ -212,7 +226,7 @@ async function runWarnings(data: Record<string, unknown>, filePath: string): Pro
     // Ignore drift detection errors during raw data validation
   }
 
-  return warnings;
+  return diagnostics;
 }
 
 // ─── Auto-Fix Functionality ──────────────────────────────────────────────────
@@ -342,19 +356,40 @@ function applyFixes(data: Record<string, unknown>, filePath: string): { data: Re
  * Attempts to detect the primary language from the project structure.
  * Exported for use in init command and other modules.
  */
+const DETECT_LANG_IGNORED_DIRS = new Set(["node_modules", "dist", ".git", ".next", ".nuxt", "build", "coverage"]);
+const DETECT_LANG_MAX_DEPTH = 10;
+
+function readdirRecursive(dir: string, maxDepth: number, ignoreSet: Set<string>, currentDepth = 0): string[] {
+  if (currentDepth >= maxDepth) return [];
+  const results: string[] = [];
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (ignoreSet.has(entry.name)) continue;
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        results.push(...readdirRecursive(fullPath, maxDepth, ignoreSet, currentDepth + 1));
+      } else if (entry.isFile()) {
+        results.push(fullPath);
+      }
+    }
+  } catch {
+    // Skip unreadable directories
+  }
+  return results;
+}
+
 export function detectLanguage(filePath: string): string {
   const dir = path.dirname(filePath);
 
   try {
-    const files = fs.readdirSync(dir, { recursive: true });
+    const files = readdirRecursive(dir, DETECT_LANG_MAX_DEPTH, DETECT_LANG_IGNORED_DIRS);
 
     // Count file extensions
     const extensions: Record<string, number> = {};
     for (const file of files) {
-      if (typeof file === "string") {
-        const ext = path.extname(file);
-        extensions[ext] = (extensions[ext] || 0) + 1;
-      }
+      const ext = path.extname(file);
+      extensions[ext] = (extensions[ext] || 0) + 1;
     }
 
     // Map extensions to languages

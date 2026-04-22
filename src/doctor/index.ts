@@ -30,7 +30,8 @@ function loadConfig(): SignatureConfig {
     const raw = fs.readFileSync(CONFIG_PATH, "utf-8");
     return JSON.parse(raw);
   } catch (e) {
-    // Fallback to minimal config if file missing
+    const reason = e instanceof Error ? e.message : String(e);
+    console.warn(chalk.yellow(`Warning: Failed to load doctor signatures (${reason}). Using fallback configuration.`));
     return {
       signatures: [],
       keywordMap: {
@@ -169,7 +170,7 @@ function generateMismatchIssue(sig: SignatureConfig["signatures"][0], data: Guid
   // Check language field
   if (baseField === "language" && sig.name === "TypeScript") {
     const langs = Array.isArray(data.language) ? data.language : [data.language];
-    if (!langs.includes("typescript" as any)) {
+    if (!langs.some(lang => typeof lang === "string" && lang.toLowerCase() === "typescript")) {
       return {
         type: "fingerprint-mismatch",
         severity: "error",
@@ -215,125 +216,128 @@ function generateMismatchIssue(sig: SignatureConfig["signatures"][0], data: Guid
 
 // ─── Deep Static Analysis ─────────────────────────────────────────────────────
 
-export async function runDoctor(data: GuideMdFrontmatter, content: string, projectRoot: string = process.cwd()): Promise<DoctorReport> {
-  const issues: DoctorIssue[] = [];
-  const signaturesFound: string[] = [];
-  let filesScanned = 0;
-
-  // Load package.json once for dependency checks
-  const pkg = loadPackageJson(projectRoot);
-
-  // 1. Architectural Fingerprinting (Configuration-Aware)
-  for (const sig of CONFIG.signatures) {
-    const found = checkSignature(sig, projectRoot, pkg);
-    
-    if (found) {
-      signaturesFound.push(sig.name);
-      
-      // Compare against GUIDE.md using dynamic issue generation
-      const mismatchIssue = generateMismatchIssue(sig, data);
-      if (mismatchIssue) {
-        issues.push(mismatchIssue);
-      }
-    }
-    
-    // Count files for stats
-    if (sig.check.files) {
-      filesScanned += sig.check.files.length;
-    }
-  }
-
-  // 2. Dependency Tree Validation (tsconfig & package.json)
+function checkTsconfigStrict(data: GuideMdFrontmatter, projectRoot: string): DoctorIssue[] {
   const tsconfigPath = path.join(projectRoot, "tsconfig.json");
-  if (fs.existsSync(tsconfigPath) && data.strict_typing) {
-    try {
-      const tsconfig = JSON.parse(fs.readFileSync(tsconfigPath, "utf-8"));
-      const isStrict = tsconfig.compilerOptions?.strict === true;
-      if (!isStrict) {
-        issues.push({
+  if (!fs.existsSync(tsconfigPath) || !data.strict_typing) return [];
+  try {
+    const tsconfig = JSON.parse(fs.readFileSync(tsconfigPath, "utf-8"));
+    const isStrict = tsconfig.compilerOptions?.strict === true;
+    if (!isStrict) {
+      return [{
+        type: "logic-conflict",
+        severity: "warning",
+        field: "strict_typing",
+        message: "GUIDE.md requests 'strict_typing: true', but 'strict' is false in tsconfig.json.",
+        recommendation: "Enable 'strict: true' in tsconfig.json to match your AI context rules."
+      }];
+    }
+  } catch {
+    // Ignore parse errors for tsconfig
+  }
+  return [];
+}
+
+function checkRuntimeDrift(data: GuideMdFrontmatter, projectRoot: string): DoctorIssue[] {
+  const pkgPath = path.join(projectRoot, "package.json");
+  if (!fs.existsSync(pkgPath) || !data.runtime) return [];
+  try {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+    const nodeVersionMatch = data.runtime.match(/node@(\d+)/);
+    if (nodeVersionMatch && pkg.engines?.node) {
+      const guideVersion = nodeVersionMatch[1];
+      if (!pkg.engines.node.includes(guideVersion)) {
+        return [{
           type: "logic-conflict",
           severity: "warning",
-          field: "strict_typing",
-          message: "GUIDE.md requests 'strict_typing: true', but 'strict' is false in tsconfig.json.",
-          recommendation: "Enable 'strict: true' in tsconfig.json to match your AI context rules."
-        });
-      }
-    } catch (e) {
-      // Ignore parse errors for tsconfig
-    }
-  }
-
-  const pkgPath = path.join(projectRoot, "package.json");
-  if (fs.existsSync(pkgPath) && data.runtime) {
-    try {
-      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-      const nodeVersionMatch = data.runtime.match(/node@(\d+)/);
-      if (nodeVersionMatch && pkg.engines?.node) {
-        const guideVersion = nodeVersionMatch[1];
-        if (!pkg.engines.node.includes(guideVersion)) {
-          issues.push({
-            type: "logic-conflict",
-            severity: "warning",
-            field: "runtime",
-            message: `Runtime drift: GUIDE.md says node@${guideVersion}, but package.json engines.node is '${pkg.engines.node}'.`,
-            recommendation: "Sync your package.json engines to match your target AI runtime."
-          });
-        }
-      }
-    } catch (e) {}
-  }
-
-  // 2. Dependency Tree Validation (Framework versions from package.json)
-  if (pkg) {
-    const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
-    const frameworks = Array.isArray(data.framework) 
-      ? data.framework 
-      : data.framework ? [data.framework] : [];
-    
-    for (const fw of frameworks) {
-      const [name, declaredVersion] = fw.split("@");
-      if (name && allDeps[name]) {
-        const actualVersion = allDeps[name].replace(/[\^~]/, "");
-        if (declaredVersion && actualVersion !== declaredVersion) {
-          issues.push({
-            type: "logic-conflict",
-            severity: "warning",
-            field: "framework",
-            message: `Framework version mismatch: ${name} is ${actualVersion} in package.json but ${declaredVersion} in GUIDE.md.`,
-            recommendation: `Update GUIDE.md to framework: "${name}@${actualVersion}" to match package.json.`
-          });
-        }
+          field: "runtime",
+          message: `Runtime drift: GUIDE.md says node@${guideVersion}, but package.json engines.node is '${pkg.engines.node}'.`,
+          recommendation: "Sync your package.json engines to match your target AI runtime."
+        }];
       }
     }
+  } catch {
+    // Ignore parse errors for package.json
   }
+  return [];
+}
 
-  // 3. Contextual Pruner (Redundancy Detection)
+function checkFrameworkVersions(data: GuideMdFrontmatter, pkg: PackageJson | null): DoctorIssue[] {
+  if (!pkg) return [];
+  const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
+  const frameworks = Array.isArray(data.framework)
+    ? data.framework
+    : data.framework ? [data.framework] : [];
+
+  return frameworks.flatMap((fw) => {
+    const [name, declaredVersion] = fw.split("@");
+    if (!name || !allDeps[name]) return [];
+    const actualVersion = allDeps[name].replace(/[\^~]/, "");
+    if (!declaredVersion || actualVersion === declaredVersion) return [];
+    return [{
+      type: "logic-conflict" as const,
+      severity: "warning" as const,
+      field: "framework",
+      message: `Framework version mismatch: ${name} is ${actualVersion} in package.json but ${declaredVersion} in GUIDE.md.`,
+      recommendation: `Update GUIDE.md to framework: "${name}@${actualVersion}" to match package.json.`
+    }];
+  });
+}
+
+function checkRedundancy(data: GuideMdFrontmatter, content: string): DoctorIssue[] {
   const paragraphs = content.split(/\n\s*\n/);
-  for (const para of paragraphs) {
+  return paragraphs.flatMap((para) => {
     const cleanPara = para.toLowerCase().replace(/[^\w\s]/g, "");
     const words = cleanPara.split(/\s+/).filter(w => w.length > 3);
-    
-    if (words.length < 5) continue;
+    if (words.length < 5) return [];
 
-    for (const [field, keywords] of Object.entries(CONFIG.keywordMap)) {
-      // Skip if field is not in data
-      const value = getField(data, field);
-      if (value === undefined || value === false) continue;
+    return Object.entries(CONFIG.keywordMap).flatMap(([field, keywords]) => {
+      const value = getField(data as Record<string, unknown>, field);
+      if (value === undefined || value === false) return [];
 
       const overlap = keywords.filter(k => cleanPara.includes(k));
       const overlapRatio = overlap.length / keywords.length;
+      if (overlapRatio <= 0.6) return [];
 
-      if (overlapRatio > 0.6) { // 60% overlap threshold
-        issues.push({
-          type: "redundancy",
-          severity: "low" as any, // mapping to warning in report
-          field,
-          message: `Paragraph starting with "${para.substring(0, 30)}..." repeats logic from YAML field '${field}'.`,
-          recommendation: `Remove this paragraph from Markdown. The AI already knows about ${field} from the frontmatter.`
-        });
-      }
-    }
-  }
+      return [{
+        type: "redundancy" as const,
+        severity: "warning" as const,
+        field,
+        message: `Paragraph starting with "${para.substring(0, 30)}..." repeats logic from YAML field '${field}'.`,
+        recommendation: `Remove this paragraph from Markdown. The AI already knows about ${field} from the frontmatter.`
+      }];
+    });
+  });
+}
+
+export async function runDoctor(data: GuideMdFrontmatter, content: string, projectRoot: string = process.cwd()): Promise<DoctorReport> {
+  const pkg = loadPackageJson(projectRoot);
+
+  // 1. Architectural Fingerprinting (pure computation)
+  const signatureResults = CONFIG.signatures.map(sig => ({
+    found: checkSignature(sig, projectRoot, pkg),
+    mismatch: generateMismatchIssue(sig, data),
+    name: sig.name,
+    fileCount: sig.check.files?.length ?? 0,
+  }));
+
+  const signatureIssues = signatureResults
+    .filter(r => r.found && r.mismatch)
+    .map(r => r.mismatch!);
+
+  const signaturesFound = signatureResults
+    .filter(r => r.found)
+    .map(r => r.name);
+
+  const filesScanned = signatureResults.reduce((sum, r) => sum + r.fileCount, 0);
+
+  // 2-4. Pure issue generators composed via concat
+  const issues: DoctorIssue[] = [
+    ...signatureIssues,
+    ...checkTsconfigStrict(data, projectRoot),
+    ...checkRuntimeDrift(data, projectRoot),
+    ...checkFrameworkVersions(data, pkg),
+    ...checkRedundancy(data, content),
+  ];
 
   return {
     valid: issues.filter(i => i.severity === "error").length === 0,
@@ -345,9 +349,12 @@ export async function runDoctor(data: GuideMdFrontmatter, content: string, proje
   };
 }
 
-function getField(obj: any, path: string): any {
-  return path.split('.').reduce((prev, curr) => {
-    return prev ? prev[curr] : undefined;
+function getField(obj: Record<string, unknown>, path: string): unknown {
+  return path.split('.').reduce<unknown>((prev, curr) => {
+    if (prev && typeof prev === "object" && !Array.isArray(prev)) {
+      return (prev as Record<string, unknown>)[curr];
+    }
+    return undefined;
   }, obj);
 }
 

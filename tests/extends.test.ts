@@ -396,7 +396,7 @@ B
 
       expect(result.errors).toHaveLength(0);
       expect(result.data.project).toBe("standalone");
-      expect((result.data as any).custom_field).toBe("value");
+      expect((result.data as Record<string, unknown>).custom_field).toBe("value");
     });
   });
 

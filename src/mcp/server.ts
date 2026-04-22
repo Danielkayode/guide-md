@@ -72,9 +72,9 @@ export class McpServer {
   }
 
   private handleToolsCall(request: JsonRpcRequest): JsonRpcResponse {
-    const name = request.params?.name as string;
-    if (!name) {
-      return this.errorResponse(request.id, -32602, "Missing tool name");
+    const name = request.params?.name;
+    if (typeof name !== "string") {
+      return this.errorResponse(request.id, -32602, "Missing or invalid tool name");
     }
 
     const result = callTool(name, this.data, this.content);
@@ -97,9 +97,9 @@ export class McpServer {
   }
 
   private handleResourcesRead(request: JsonRpcRequest): JsonRpcResponse {
-    const uri = request.params?.uri as string;
-    if (!uri) {
-      return this.errorResponse(request.id, -32602, "Missing resource URI");
+    const uri = request.params?.uri;
+    if (typeof uri !== "string") {
+      return this.errorResponse(request.id, -32602, "Missing or invalid resource URI");
     }
 
     const resource = readResource(uri, this.data, this.content);

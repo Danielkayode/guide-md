@@ -222,7 +222,7 @@ export const GuideMdSchema = z
       .optional()
       .describe("Token budgets per section for controlling AI context size"),
   })
-  .strict(); // Disallows unknown keys — keeps the spec tight
+  .passthrough(); // Allows unknown keys for forward compatibility
 
 // ─── Type Export ─────────────────────────────────────────────────────────────
 export type GuideMdFrontmatter = z.infer<typeof GuideMdSchema>;

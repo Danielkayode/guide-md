@@ -381,5 +381,75 @@ error_protocol: verbose
       const detected = detectLanguage(guidePath);
       expect(detected).toBe("typescript");
     });
+
+    it("should handle deeply nested directories without hanging", () => {
+      const projectDir = path.join(tempDir, "deep-project");
+      fs.mkdirSync(projectDir, { recursive: true });
+      
+      // Create deeply nested structure
+      let currentDir = projectDir;
+      for (let i = 0; i < 15; i++) {
+        currentDir = path.join(currentDir, `level${i}`);
+        fs.mkdirSync(currentDir, { recursive: true });
+      }
+      fs.writeFileSync(path.join(currentDir, "deep.py"), "print('deep')");
+      
+      const guidePath = path.join(projectDir, "GUIDE.md");
+      fs.writeFileSync(guidePath, "---\n---\n");
+      
+      // Should not hang and should respect depth limit
+      const detected = detectLanguage(guidePath);
+      // With max depth 10, deep.py at depth 15 won't be found, so defaults to typescript
+      expect(detected).toBe("typescript");
+    });
+
+    it("should ignore node_modules in language detection", () => {
+      const projectDir = path.join(tempDir, "node-modules-project");
+      fs.mkdirSync(projectDir, { recursive: true });
+      fs.mkdirSync(path.join(projectDir, "node_modules", "some-lib"), { recursive: true });
+      fs.writeFileSync(path.join(projectDir, "node_modules", "some-lib", "index.py"), "print('hello')");
+      fs.writeFileSync(path.join(projectDir, "app.ts"), "export const x = 1;");
+      
+      const guidePath = path.join(projectDir, "GUIDE.md");
+      fs.writeFileSync(guidePath, "---\n---\n");
+      
+      const detected = detectLanguage(guidePath);
+      expect(detected).toBe("typescript");
+    });
+  });
+
+  describe("invalid date handling", () => {
+    it("should not crash on invalid last_updated date string", async () => {
+      const content = `---
+guide_version: "1.0.0"
+project: "test-project"
+language: typescript
+strict_typing: true
+error_protocol: verbose
+last_updated: "not-a-date"
+---
+
+# Test
+`;
+      const filePath = path.join(tempDir, "GUIDE.md");
+      fs.writeFileSync(filePath, content);
+
+      const result = await lintGuideFile(filePath);
+
+      // Should not throw; schema validation should catch the invalid format
+      expect(result.valid).toBe(false);
+      expect(result.diagnostics.some(d => d.severity === "error" && d.field === "last_updated")).toBe(true);
+    });
+  });
+
+  describe("error handling", () => {
+    it("should log a diagnostic when file cannot be read for secret scanning", async () => {
+      const filePath = path.join(tempDir, "nonexistent", "GUIDE.md");
+
+      const result = await lintGuideFile(filePath);
+
+      // Should produce a warning about not being able to read the file for secret scanning
+      expect(result.diagnostics.some(d => d.field === "(secret-scan)" && d.severity === "warning")).toBe(true);
+    });
   });
 });
