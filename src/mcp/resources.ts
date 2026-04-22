@@ -1,5 +1,12 @@
 import { GuideMdFrontmatter } from "../schema/index.js";
 
+// Security: Maximum line length to prevent ReDoS attacks
+const MAX_LINE_LENGTH = 10000;
+// Security: Maximum section name length
+const MAX_SECTION_NAME_LENGTH = 200;
+// Security: Maximum content processing size
+const MAX_CONTENT_SIZE = 5 * 1024 * 1024;
+
 export interface McpResource {
   uri: string;
   name: string;
@@ -7,7 +14,8 @@ export interface McpResource {
   mimeType: string;
 }
 
-export const RESOURCES: McpResource[] = [
+// Define resources array (will be frozen before export)
+const RESOURCES_DEFINITION: McpResource[] = [
   {
     uri: "guidemd://frontmatter",
     name: "GUIDE.md Frontmatter",
@@ -39,6 +47,9 @@ export const RESOURCES: McpResource[] = [
     mimeType: "text/markdown"
   }
 ];
+
+// Export frozen copy to prevent runtime mutation
+export const RESOURCES: readonly McpResource[] = Object.freeze([...RESOURCES_DEFINITION]);
 
 export interface ResourceContent {
   uri: string;
@@ -88,20 +99,78 @@ export function readResource(uri: string, data: GuideMdFrontmatter, fullContent:
   }
 }
 
+/**
+ * Validates that section extraction inputs are safe.
+ */
+function validateExtractionInputs(content: string, sectionName: string): string | null {
+  // Check content size
+  if (content.length > MAX_CONTENT_SIZE) {
+    return "Content too large for section extraction";
+  }
+  
+  // Check section name length
+  if (sectionName.length > MAX_SECTION_NAME_LENGTH) {
+    return `Section name too long (max ${MAX_SECTION_NAME_LENGTH} characters)`;
+  }
+  
+  return null;
+}
+
+/**
+ * Safely extracts a heading level from a line without using regex.
+ */
+function extractHeadingLevel(line: string): { level: number; text: string } | null {
+  // Skip if line is too long (ReDoS protection)
+  if (line.length > MAX_LINE_LENGTH) {
+    return null;
+  }
+  
+  // Count leading # characters manually
+  let level = 0;
+  for (let i = 0; i < line.length && i < 6; i++) {
+    if (line[i] === "#") {
+      level++;
+    } else {
+      break;
+    }
+  }
+  
+  // Must have at least one # and must be followed by whitespace
+  if (level === 0 || level > 6) {
+    return null;
+  }
+  
+  // Check for whitespace after hashes
+  const charAfterHashes = line[level];
+  if (line.length <= level || !charAfterHashes || !/[\s]/.test(charAfterHashes)) {
+    return null;
+  }
+  
+  // Extract heading text
+  const text = line.slice(level + 1).trim();
+  
+  return { level, text };
+}
+
 function extractSection(content: string, sectionName: string): string {
+  // Validate inputs first
+  const validationError = validateExtractionInputs(content, sectionName);
+  if (validationError) {
+    return `Error: ${validationError}`;
+  }
+  
   const lines = content.split("\n");
   let capturing = false;
   let result: string[] = [];
   let currentLevel = 0;
 
   for (const line of lines) {
-    const headerMatch = line.match(/^(#{1,6})\s+/);
+    const heading = extractHeadingLevel(line);
     
-    if (headerMatch && headerMatch[1]) {
-      const level = headerMatch[1].length;
-      const headerText = line.replace(/^#{1,6}\s+/, "").trim();
+    if (heading) {
+      const { level, text } = heading;
       
-      if (headerText === sectionName) {
+      if (text === sectionName) {
         capturing = true;
         currentLevel = level;
         continue;

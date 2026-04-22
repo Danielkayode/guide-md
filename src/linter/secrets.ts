@@ -80,6 +80,11 @@ function isPlaceholder(value: string): boolean {
 
 // ─── Scanner ────────────────────────────────────────────────────────────────────
 
+// ─── Security Configuration ─────────────────────────────────────────────────
+
+const MAX_LINE_LENGTH = 10000; // Prevent ReDoS with extremely long lines
+const MAX_MATCHES_PER_PATTERN = 10; // Limit matches per pattern per line
+
 /**
  * Scans raw file content for potential secrets.
  * 
@@ -95,23 +100,32 @@ export function scanForSecrets(content: string, filePath: string): SecretScanRes
   lines.forEach((line, lineIndex) => {
     const lineNumber = lineIndex + 1;
     
+    // Security: Skip extremely long lines to prevent ReDoS attacks
+    if (line.length > MAX_LINE_LENGTH) {
+      console.warn(`[guidemd] Skipping overly long line ${lineNumber} in secret scan (ReDoS protection)`);
+      return;
+    }
+    
     // Check YAML keys that might contain secrets
     // First capture the key, then test against sensitive patterns
     const keyValueMatch = line.match(/^\s*([a-zA-Z0-9_.]+)\s*:\s*(.+)$/);
     if (keyValueMatch && keyValueMatch[1] && keyValueMatch[2]) {
       const key = keyValueMatch[1].trim();
-      const value = keyValueMatch[2].trim().replace(/^["'](.*)["']$/, "$1"); // Strip quotes
+      // Security: Limit value length for safety
+      const rawValue = keyValueMatch[2].trim();
+      const value = rawValue.length > 1000 ? rawValue.slice(0, 1000) : rawValue;
+      const cleanedValue = value.replace(/^["'](.*)["']$/, "$1"); // Strip quotes
       
       // Test if key matches sensitive patterns
       if (isSensitiveKey(key)) {
         // Skip placeholders and empty values
-        if (!isPlaceholder(value) && value !== "" && value !== "null" && value !== "~") {
+        if (!isPlaceholder(cleanedValue) && cleanedValue !== "" && cleanedValue !== "null" && cleanedValue !== "~") {
           violations.push({
             line: lineNumber,
             key,
             pattern: "Sensitive YAML key with non-placeholder value",
-            value,
-            maskedValue: maskSecret(value),
+            value: cleanedValue,
+            maskedValue: maskSecret(cleanedValue),
           });
           return; // One violation per line is enough
         }
@@ -123,7 +137,20 @@ export function scanForSecrets(content: string, filePath: string): SecretScanRes
       const flags = (pattern.flags || "") + "g";
       const regex = new RegExp(pattern.source, flags);
       let match;
+      let matchCount = 0;
+      
       while ((match = regex.exec(line)) !== null) {
+        // Security: Limit matches per pattern to prevent DoS
+        if (++matchCount > MAX_MATCHES_PER_PATTERN) {
+          console.warn(`[guidemd] Limiting matches for pattern "${name}" on line ${lineNumber} (DoS protection)`);
+          break;
+        }
+        
+        // Security: Prevent infinite loops with empty matches
+        if (match.index === regex.lastIndex) {
+          regex.lastIndex++;
+        }
+        
         const rawValue = maskGroup ? match[maskGroup] : match[0];
         
         if (!rawValue) {

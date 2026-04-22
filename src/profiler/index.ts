@@ -130,15 +130,36 @@ function splitSections(content: string): { name: string, content: string }[] {
   return sections;
 }
 
-function countFiles(dir: string, patterns: string[]): number {
+// Security: Maximum depth to prevent infinite recursion from circular symlinks
+const MAX_PROFILER_DEPTH = 10;
+
+function countFiles(dir: string, patterns: string[], depth: number = 0): number {
+  // Security: Prevent stack overflow from deeply nested directories or circular symlinks
+  if (depth > MAX_PROFILER_DEPTH) {
+    return 0;
+  }
+  
   let count = 0;
   try {
-    const files = fs.readdirSync(dir, { recursive: true });
-    for (const f of files) {
-      if (typeof f !== "string") continue;
-      if (patterns.some(p => f.includes(p))) count++;
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      
+      // Security: Skip symlinks to prevent escaping out of project directory
+      if (entry.isSymbolicLink()) {
+        continue;
+      }
+      
+      if (entry.isDirectory()) {
+        // Security: Recurse with depth limit
+        count += countFiles(fullPath, patterns, depth + 1);
+      } else if (entry.isFile()) {
+        if (patterns.some(p => entry.name.includes(p))) count++;
+      }
     }
-  } catch (e) {}
+  } catch (e) {
+    // Ignore permission errors and continue
+  }
   return count;
 }
 

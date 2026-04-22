@@ -13,6 +13,52 @@ const INDEX_PATH = path.join(os.homedir(), ".guidemd", "registry.json");
 const INDEX_HASH_PATH = path.join(os.homedir(), ".guidemd", "registry.json.sha256");
 const GITHUB_BASE = "https://raw.githubusercontent.com/guidemd/registry/main/modules";
 
+// ─── Security Utilities ───────────────────────────────────────────────────────
+
+/**
+ * Validates and sanitizes a module name to prevent path traversal attacks.
+ * Only allows alphanumeric characters, hyphens, underscores, and dots.
+ * Rejects any name containing path traversal sequences.
+ */
+export function sanitizeModuleName(name: string): string | null {
+  // Reject empty or overly long names
+  if (!name || name.length === 0 || name.length > 100) {
+    return null;
+  }
+
+  // Reject path traversal attempts
+  if (name.includes("..") || name.includes("/") || name.includes("\\") || name.includes("%")) {
+    return null;
+  }
+
+  // Only allow safe characters: alphanumeric, hyphens, underscores, dots
+  if (!/^[a-zA-Z0-9._-]+$/.test(name)) {
+    return null;
+  }
+
+  // Reject hidden files and reserved names
+  const lowerName = name.toLowerCase();
+  if (lowerName.startsWith(".") || lowerName === "con" || lowerName === "prn" || 
+      lowerName === "aux" || lowerName === "nul" || lowerName === "com1" ||
+      lowerName === "com2" || lowerName === "com3" || lowerName === "com4" ||
+      lowerName === "lpt1" || lowerName === "lpt2" || lowerName === "lpt3") {
+    return null;
+  }
+
+  return name;
+}
+
+/**
+ * Ensures a resolved file path is within the allowed cache directory.
+ * This provides defense-in-depth against path traversal even if sanitization is bypassed.
+ * Exported for testing.
+ */
+export function isPathWithinCache(filePath: string): boolean {
+  const resolved = path.resolve(filePath);
+  const resolvedCache = path.resolve(CACHE_DIR);
+  return resolved.startsWith(resolvedCache + path.sep) || resolved === resolvedCache;
+}
+
 // ─── Hash Utilities ───────────────────────────────────────────────────────────
 
 function computeHash(data: string): string {
@@ -31,10 +77,18 @@ function readHash(filePath: string): string | null {
 
 function writeHash(filePath: string, hash: string): void {
   const hashPath = `${filePath}.sha256`;
+  const tempPath = `${hashPath}.tmp`;
   try {
-    fs.writeFileSync(hashPath, hash, "utf-8");
+    // Write to temp file first, then atomic rename
+    fs.writeFileSync(tempPath, hash, "utf-8");
+    fs.renameSync(tempPath, hashPath);
   } catch {
     // Ignore hash write failures
+    try {
+      fs.unlinkSync(tempPath);
+    } catch {
+      // Ignore cleanup failure
+    }
   }
 }
 
@@ -57,8 +111,12 @@ function ensureCacheDir(): void {
   }
 }
 
-function modulePath(name: string): string {
-  return path.join(CACHE_DIR, `${name}.guide`);
+function modulePath(name: string): string | null {
+  const sanitized = sanitizeModuleName(name);
+  if (!sanitized) {
+    return null;
+  }
+  return path.join(CACHE_DIR, `${sanitized}.guide`);
 }
 
 function readIndex(): RegistryEntry[] {
@@ -80,9 +138,21 @@ function readIndex(): RegistryEntry[] {
 function writeIndex(entries: RegistryEntry[]): void {
   ensureCacheDir();
   const content = JSON.stringify({ version: "1.0.0", modules: entries }, null, 2);
-  fs.writeFileSync(INDEX_PATH, content, "utf-8");
-  // Store hash for integrity verification
-  writeHash(INDEX_PATH, computeHash(content));
+  const tempPath = `${INDEX_PATH}.tmp`;
+  try {
+    // Atomic write: write to temp then rename
+    fs.writeFileSync(tempPath, content, "utf-8");
+    fs.renameSync(tempPath, INDEX_PATH);
+    // Store hash for integrity verification
+    writeHash(INDEX_PATH, computeHash(content));
+  } catch {
+    // Cleanup on failure
+    try {
+      fs.unlinkSync(tempPath);
+    } catch {
+      // Ignore cleanup failure
+    }
+  }
 }
 
 // ─── Fuzzy Search Utilities ───────────────────────────────────────────────────
@@ -190,15 +260,86 @@ async function fetchHttpsWithRetry(url: string, retries = 3): Promise<string> {
 }
 
 /**
+ * Validates a URL is safe to fetch (prevents SSRF attacks).
+ * Only allows HTTPS to known safe origins, blocks internal IPs.
+ */
+function isSafeUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    
+    // Only allow HTTPS protocol
+    if (parsed.protocol !== "https:") {
+      return false;
+    }
+    
+    // Only allow specific trusted hosts
+    const allowedHosts = [
+      "raw.githubusercontent.com",
+      "github.com",
+      "api.github.com"
+    ];
+    
+    if (!allowedHosts.some(host => parsed.hostname === host || parsed.hostname.endsWith(`.${host}`))) {
+      return false;
+    }
+    
+    // Block URLs with credentials
+    if (parsed.username || parsed.password) {
+      return false;
+    }
+    
+    // Block URLs with unusual ports
+    if (parsed.port && parsed.port !== "443") {
+      return false;
+    }
+    
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Validates redirect location is safe.
+ */
+function isSafeRedirect(originalUrl: string, redirectUrl: string): boolean {
+  // Resolve relative URLs
+  let resolvedUrl: string;
+  try {
+    resolvedUrl = new URL(redirectUrl, originalUrl).href;
+  } catch {
+    return false;
+  }
+  
+  // Must pass all safety checks
+  return isSafeUrl(resolvedUrl);
+}
+
+/**
  * Single fetch attempt (internal).
  */
-function fetchHttpsOnce(url: string): Promise<string> {
+function fetchHttpsOnce(url: string, redirectCount = 0): Promise<string> {
+  // Prevent redirect loops
+  if (redirectCount > 3) {
+    return Promise.reject(new Error("Too many redirects"));
+  }
+  
+  // Validate URL before fetching
+  if (!isSafeUrl(url)) {
+    return Promise.reject(new Error("Unsafe URL blocked by SSRF protection"));
+  }
+  
   return new Promise((resolve, reject) => {
     const req = https.get(url, (res) => {
-      if (res.statusCode === 301 || res.statusCode === 302) {
+      if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308) {
         const location = res.headers.location;
         if (location) {
-          fetchHttpsOnce(location).then(resolve).catch(reject);
+          // Validate redirect is safe before following
+          if (!isSafeRedirect(url, location)) {
+            reject(new Error("Redirect to unsafe URL blocked"));
+            return;
+          }
+          fetchHttpsOnce(location, redirectCount + 1).then(resolve).catch(reject);
           return;
         }
       }
@@ -246,6 +387,14 @@ export const localSource: RegistrySource = {
 
   async fetchModule(moduleName: string): Promise<GuideModule | null> {
     const filePath = modulePath(moduleName);
+    if (!filePath) {
+      console.warn(`[guidemd] Invalid module name: ${moduleName}`);
+      return null;
+    }
+    if (!isPathWithinCache(filePath)) {
+      console.warn(`[guidemd] Security: Module path escapes cache directory: ${moduleName}`);
+      return null;
+    }
     if (!fs.existsSync(filePath)) return null;
     // Verify integrity before returning cached module
     if (!verifyFileIntegrity(filePath)) {
@@ -272,6 +421,11 @@ export const githubSource: RegistrySource = {
   name: "github",
 
   async fetchModule(moduleName: string): Promise<GuideModule | null> {
+    // Validate module name before making network request
+    if (!sanitizeModuleName(moduleName)) {
+      console.warn(`[guidemd] Invalid module name: ${moduleName}`);
+      return null;
+    }
     const url = `${GITHUB_BASE}/${moduleName}.guide`;
     try {
       const raw = await fetchHttpsWithRetry(url);
@@ -280,8 +434,22 @@ export const githubSource: RegistrySource = {
         // Cache locally for future offline use with hash verification
         ensureCacheDir();
         const filePath = modulePath(moduleName);
-        fs.writeFileSync(filePath, raw, "utf-8");
-        writeHash(filePath, computeHash(raw));
+        if (filePath && isPathWithinCache(filePath)) {
+          // Atomic write: write to temp file then rename to prevent TOCTOU race condition
+          const tempPath = `${filePath}.tmp`;
+          try {
+            fs.writeFileSync(tempPath, raw, "utf-8");
+            fs.renameSync(tempPath, filePath);
+            writeHash(filePath, computeHash(raw));
+          } catch {
+            // Cleanup on failure
+            try {
+              fs.unlinkSync(tempPath);
+            } catch {
+              // Ignore cleanup failure
+            }
+          }
+        }
       }
       return module;
     } catch {

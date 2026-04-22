@@ -3,6 +3,109 @@ import fs from "node:fs";
 import path from "node:path";
 import matter from "gray-matter";
 
+// ─── Security: ReDoS Protection ───────────────────────────────────────────────
+// Export for external regex validation
+export { isReDoSSafe };
+
+const REGEX_TIMEOUT_MS = 1000; // Maximum time for any regex operation
+
+/**
+ * Security: Analyzes regex pattern for ReDoS vulnerabilities.
+ * Rejects patterns with dangerous nested quantifiers that cause catastrophic backtracking.
+ */
+function isReDoSSafe(pattern: string): boolean {
+  // Reject patterns with nested quantifiers like (a+)+, (a*)*, (a+)*, etc.
+  // These are the primary cause of catastrophic backtracking
+  const dangerousPatterns = [
+    /\([^)]*\+\)\+/,     // (something+)+ - nested plus
+    /\([^)]*\*\)\*/,     // (something*)* - nested star
+    /\([^)]*\+\)\*/,     // (something+)* - mixed nested
+    /\([^)]*\*\)\+/,     // (something*)+ - mixed nested
+    /\([^)]*\{[^}]+\}\)\{/, // (something{n,m}){x,y} - nested braces
+    /\(\?[:=!][^)]+\)[*+]/, // lookahead/behind followed by quantifier
+  ];
+
+  for (const dangerous of dangerousPatterns) {
+    if (dangerous.test(pattern)) {
+      return false;
+    }
+  }
+
+  // Check for excessive nesting depth (more than 5 levels of nested groups)
+  let depth = 0;
+  let maxDepth = 0;
+  const hasNonCapturing = pattern.includes('(?:');
+  for (const char of pattern) {
+    if (char === '(' && !hasNonCapturing) {
+      depth++;
+      maxDepth = Math.max(maxDepth, depth);
+    } else if (char === ')') {
+      depth--;
+    }
+  }
+
+  if (maxDepth > 5) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Security: Executes a regex with pre-flight safety checks against ReDoS attacks.
+ * NOTE: This function performs safety checks BEFORE execution but cannot interrupt
+ * a running regex. The timeout check only catches slow regexes that complete.
+ * For truly dangerous patterns, use isReDoSSafe() to reject them upfront.
+ */
+function safeRegexExec(
+  pattern: string,
+  flags: string,
+  content: string,
+  timeoutMs: number = REGEX_TIMEOUT_MS
+): RegExpMatchArray | null {
+  // Quick check: reject inputs that are too large
+  if (content.length > 1024 * 1024) { // 1MB limit
+    throw new Error("Input too large for regex processing");
+  }
+
+  // Security: Reject known-dangerous patterns that cause catastrophic backtracking
+  if (!isReDoSSafe(pattern)) {
+    throw new Error("Regex pattern rejected: potentially unsafe nested quantifiers detected");
+  }
+
+  // For simplicity and portability, use a synchronous approach with try/catch
+  // and a simple execution time check
+  const start = Date.now();
+  const regex = new RegExp(pattern, flags);
+  const result = content.match(regex);
+
+  if (Date.now() - start > timeoutMs) {
+    throw new Error(`Regex operation timed out after ${timeoutMs}ms - possible ReDoS attack`);
+  }
+
+  return result;
+}
+
+/**
+ * Security: Wrapper for String.prototype.match with ReDoS protection.
+ * NOTE: Pre-compiled regexes should be checked at creation time using isReDoSSafe().
+ * This function provides input size limits and post-execution timeout detection.
+ */
+function safeMatch(content: string, regex: RegExp, timeoutMs: number = REGEX_TIMEOUT_MS): RegExpMatchArray | null {
+  if (content.length > 1024 * 1024) {
+    throw new Error("Input too large for regex processing");
+  }
+
+  const start = Date.now();
+  const result = content.match(regex);
+
+  if (Date.now() - start > timeoutMs) {
+    throw new Error(`Regex operation timed out after ${timeoutMs}ms - possible ReDoS attack`);
+  }
+
+  return result;
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface ImportResult {
@@ -46,19 +149,19 @@ function parseClaudeFormat(content: string): { data: Partial<GuideMdFrontmatter>
   };
   const unmapped: string[] = [];
   
-  // Extract context block
-  const contextMatch = content.match(/<context>([\s\S]*?)<\/context>/);
+  // Extract context block - Security: Use safeMatch with ReDoS protection
+  const contextMatch = safeMatch(content, /<context>([\s\S]*?)<\/context>/);
   const contextContent = contextMatch?.[1];
   if (contextContent) {
     // Extract project name
-    const projectMatch = contextContent.match(/# Project:\s*(.+)/m);
+    const projectMatch = safeMatch(contextContent, /# Project:\s*(.+)/m);
     const projectName = projectMatch?.[1];
     if (projectName) {
       data.project = projectName.trim();
     }
 
     // Extract description (text after project name until ## or <)
-    const descMatch = contextContent.match(/# Project:[^\n]*\n+([\s\S]*?)(?=\n##|\n<|$)/);
+    const descMatch = safeMatch(contextContent, /# Project:[^\n]*\n+([\s\S]*?)(?=\n##|\n<|$)/);
     if (descMatch?.[1]) {
       const desc = descMatch[1].trim();
       // Only use if it's not empty, doesn't start with #, and is at least 20 chars (schema requirement)
@@ -68,27 +171,27 @@ function parseClaudeFormat(content: string): { data: Partial<GuideMdFrontmatter>
     }
 
     // Extract tech stack
-    const techStackMatch = contextContent.match(/## Tech Stack([\s\S]*?)(?=##|<|$)/);
+    const techStackMatch = safeMatch(contextContent, /## Tech Stack([\s\S]*?)(?=##|<|$)/);
     const techContent = techStackMatch?.[1];
     if (techContent) {
-      const langMatch = techContent.match(/Language:\s*(.+)/);
+      const langMatch = safeMatch(techContent, /Language:\s*(.+)/);
       if (langMatch?.[1]) {
         const langs = langMatch[1].split(/,\s*/).map(l => l.trim().toLowerCase());
         data.language = langs.length === 1 ? langs[0] as any : langs as any;
       }
 
-      const runtimeMatch = techContent.match(/Runtime:\s*(.+)/);
+      const runtimeMatch = safeMatch(techContent, /Runtime:\s*(.+)/);
       if (runtimeMatch?.[1]) {
         data.runtime = runtimeMatch[1].trim();
       }
 
-      const frameworkMatch = techContent.match(/Framework:\s*(.+)/);
+      const frameworkMatch = safeMatch(techContent, /Framework:\s*(.+)/);
       if (frameworkMatch?.[1]) {
         const fw = frameworkMatch[1].split(/,\s*/).map(f => f.trim());
         data.framework = fw.length === 1 ? fw[0] : fw;
       }
 
-      const strictMatch = techContent.match(/Strict Typing:\s*(Enabled|Disabled)/);
+      const strictMatch = safeMatch(techContent, /Strict Typing:\s*(Enabled|Disabled)/);
       if (strictMatch?.[1]) {
         data.strict_typing = strictMatch[1] === "Enabled";
       }
@@ -96,18 +199,18 @@ function parseClaudeFormat(content: string): { data: Partial<GuideMdFrontmatter>
   }
   
   // Extract rules block
-  const rulesMatch = content.match(/<rules>([\s\S]*?)<\/rules>/);
+  const rulesMatch = safeMatch(content, /<rules>([\s\S]*?)<\/rules>/);
   const rulesContent = rulesMatch?.[1];
   if (rulesContent) {
     // Extract error protocol
-    const errorProtocolMatch = rulesContent.match(/Error Protocol:\s*(verbose|silent|structured)/);
+    const errorProtocolMatch = safeMatch(rulesContent, /Error Protocol:\s*(verbose|silent|structured)/);
     if (errorProtocolMatch?.[1]) {
       data.error_protocol = errorProtocolMatch[1] as "verbose" | "silent" | "structured";
     }
 
     // Extract code style hints
-    const indentMatch = rulesContent.match(/Indentation:\s*(.+)/);
-    const namingMatch = rulesContent.match(/Naming:\s*(.+)/);
+    const indentMatch = safeMatch(rulesContent, /Indentation:\s*(.+)/);
+    const namingMatch = safeMatch(rulesContent, /Naming:\s*(.+)/);
     if (indentMatch?.[1] || namingMatch?.[1]) {
       data.code_style = {
         max_line_length: 100,
@@ -119,11 +222,11 @@ function parseClaudeFormat(content: string): { data: Partial<GuideMdFrontmatter>
     }
 
     // Extract testing hints
-    const testingMatch = rulesContent.match(/## Testing\n([\s\S]*?)(?=##|<|$)/);
+    const testingMatch = safeMatch(rulesContent, /## Testing\n([\s\S]*?)(?=##|<|$)/);
     const testingContent = testingMatch?.[1];
     if (testingContent) {
-      const frameworkMatch = testingContent.match(/Framework:\s*(.+)/);
-      const coverageMatch = testingContent.match(/Coverage:\s*(\d+)%/);
+      const frameworkMatch = safeMatch(testingContent, /Framework:\s*(.+)/);
+      const coverageMatch = safeMatch(testingContent, /Coverage:\s*(\d+)%/);
 
       data.testing = {
         required: true,
@@ -135,7 +238,7 @@ function parseClaudeFormat(content: string): { data: Partial<GuideMdFrontmatter>
   }
   
   // Extract instructions (everything after rules or the main content)
-  const instructionsMatch = content.match(/## Instructions\n([\s\S]*?)(?=<\/rules>|$)/);
+  const instructionsMatch = safeMatch(content, /## Instructions\n([\s\S]*?)(?=<\/rules>|$)/);
   const instructions = instructionsMatch?.[1]?.trim() ?? "";
   
   // Default values
@@ -183,7 +286,7 @@ function parseCursorrulesFormat(content: string): { data: Partial<GuideMdFrontma
     
     // Try to extract language from rules content
     const rulesContent = parsed.content || "";
-    const langMatch = rulesContent.match(/@(typescript|javascript|python|rust|go|java)/i);
+    const langMatch = safeMatch(rulesContent, /@(typescript|javascript|python|rust|go|java)/i);
     if (langMatch?.[1]) {
       data.language = langMatch[1].toLowerCase() as any;
     }
@@ -235,7 +338,7 @@ function parseAgentsFormat(content: string): { data: Partial<GuideMdFrontmatter>
   const unmapped: string[] = [];
   
   // Extract project name from H1
-  const projectMatch = content.match(/^#\s+(.+)$/m);
+  const projectMatch = safeMatch(content, /^#\s+(.+)$/m);
   const projectName = projectMatch?.[1];
   if (projectName) {
     data.project = projectName.trim();
@@ -244,35 +347,35 @@ function parseAgentsFormat(content: string): { data: Partial<GuideMdFrontmatter>
   }
 
   // Extract description (first paragraph after H1)
-  const descMatch = content.match(/^#[^\n]*\n+([^\n#].*?)(?=\n##|\n#|$)/s);
+  const descMatch = safeMatch(content, /^#[^\n]*\n+([^\n#].*?)(?=\n##|\n#|$)/s);
   const description = descMatch?.[1];
   if (description) {
     data.description = description.trim();
   }
   
   // Extract constraints from ## Constraints section
-  const constraintsMatch = content.match(/## Constraints([\s\S]*?)(?=##|$)/);
+  const constraintsMatch = safeMatch(content, /## Constraints([\s\S]*?)(?=##|$)/);
   const constraints = constraintsMatch?.[1];
   if (constraints) {
     // Handle both plain "Language:" and markdown bold "**Language**:" formats
-    const langMatch = constraints.match(/\*?\*?Language\*?\*?:\s*(.+)/);
+    const langMatch = safeMatch(constraints, /\*?\*?Language\*?\*?:\s*(.+)/);
     if (langMatch?.[1]) {
       const langs = langMatch[1].split(/,\s*/).map(l => l.trim().toLowerCase());
       data.language = langs.length === 1 ? langs[0] as any : langs as any;
     }
 
-    const runtimeMatch = constraints.match(/\*?\*?Runtime\*?\*?:\s*(.+)/);
+    const runtimeMatch = safeMatch(constraints, /\*?\*?Runtime\*?\*?:\s*(.+)/);
     if (runtimeMatch?.[1]) {
       data.runtime = runtimeMatch[1].trim();
     }
 
-    const frameworkMatch = constraints.match(/\*?\*?Framework\*?\*?:\s*(.+)/);
+    const frameworkMatch = safeMatch(constraints, /\*?\*?Framework\*?\*?:\s*(.+)/);
     if (frameworkMatch?.[1]) {
       const fw = frameworkMatch[1].split(/,\s*/).map(f => f.trim());
       data.framework = fw.length === 1 ? fw[0] : fw;
     }
 
-    const testingMatch = constraints.match(/\*?\*?Testing\*?\*?:\s*(.+)\s+with\s+(\d+)%/);
+    const testingMatch = safeMatch(constraints, /\*?\*?Testing\*?\*?:\s*(.+)\s+with\s+(\d+)%/);
     if (testingMatch?.[1]) {
       data.testing = {
         required: true,
@@ -282,7 +385,7 @@ function parseAgentsFormat(content: string): { data: Partial<GuideMdFrontmatter>
       };
     }
 
-    const archMatch = constraints.match(/\*?\*?Architecture\*?\*?:\s*(.+)/);
+    const archMatch = safeMatch(constraints, /\*?\*?Architecture\*?\*?:\s*(.+)/);
     if (archMatch?.[1]) {
       data.context = {
         architecture_pattern: archMatch[1].trim() as any,
@@ -291,7 +394,7 @@ function parseAgentsFormat(content: string): { data: Partial<GuideMdFrontmatter>
   }
   
   // Extract rules from ## Rules section
-  const rulesMatch = content.match(/## Rules([\s\S]*?)(?=##|$)/);
+  const rulesMatch = safeMatch(content, /## Rules([\s\S]*?)(?=##|$)/);
   const rulesContent = rulesMatch?.[1];
   if (rulesContent) {
     const guardrails: any = {};
@@ -309,7 +412,7 @@ function parseAgentsFormat(content: string): { data: Partial<GuideMdFrontmatter>
       guardrails.cite_sources = true;
     }
     if (rulesContent.includes("Code Style")) {
-      const styleMatch = rulesContent.match(/Code Style[^\n]*max line length (\d+)[^,]*,\s*(.+?) indentation/);
+      const styleMatch = safeMatch(rulesContent, /Code Style[^\n]*max line length (\d+)[^,]*,\s*(.+?) indentation/);
       if (styleMatch?.[1] && styleMatch?.[2]) {
         data.code_style = {
           max_line_length: parseInt(styleMatch[1], 10),
@@ -327,7 +430,7 @@ function parseAgentsFormat(content: string): { data: Partial<GuideMdFrontmatter>
   }
   
   // Extract instructions from ## Instructions section
-  const instructionsMatch = content.match(/## Instructions([\s\S]*?)$/);
+  const instructionsMatch = safeMatch(content, /## Instructions([\s\S]*?)$/);
   const instructions = instructionsMatch?.[1]?.trim() ?? "";
   
   // Defaults

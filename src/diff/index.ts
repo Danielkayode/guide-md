@@ -419,33 +419,104 @@ export function diffGuides(
 }
 
 /**
+ * Validates and sanitizes a file path component for safe use in shell commands.
+ */
+function sanitizePathComponent(component: string): string | null {
+  // Reject empty or path traversal attempts
+  if (!component || component === "." || component === "..") {
+    return null;
+  }
+  
+  // Reject any component with path separators or dangerous characters
+  if (/[\/\\<>|&;$*?`\"']/.test(component)) {
+    return null;
+  }
+  
+  // Reject control characters
+  if (/[\x00-\x1f\x7f]/.test(component)) {
+    return null;
+  }
+  
+  // Reject overly long components
+  if (component.length > 255) {
+    return null;
+  }
+  
+  return component;
+}
+
+/**
  * Diffs the current GUIDE.md against git HEAD.
  */
 export async function diffGit(filePath: string, options: DiffOptions = {}): Promise<DiffResult> {
-  const { exec } = await import("child_process");
-  const { promisify } = await import("util");
-  const execAsync = promisify(exec);
+  const { spawn } = await import("child_process");
+  const os = await import("node:os");
 
   // Get the file content from git HEAD
   try {
-    const { stdout } = await execAsync(`git show HEAD:${path.basename(filePath)}`, {
+    // Security: Validate filePath before using in shell command
+    const baseName = path.basename(filePath);
+    const sanitizedName = sanitizePathComponent(baseName);
+    if (!sanitizedName) {
+      throw new Error("Invalid file name");
+    }
+    
+    // Use spawn instead of exec to avoid shell injection
+    const gitProcess = spawn("git", ["show", `HEAD:${sanitizedName}`], {
       cwd: path.dirname(filePath),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    
+    // Collect buffers first, then decode to handle UTF-8 characters across chunk boundaries
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+
+    gitProcess.stdout.on("data", (data: Buffer) => {
+      stdoutChunks.push(data);
     });
 
-    // Write to a temp file
-    const tempDir = await fs.promises.mkdtemp("guidemd-diff-");
+    gitProcess.stderr.on("data", (data: Buffer) => {
+      stderrChunks.push(data);
+    });
+    
+    const exitCode = await new Promise<number>((resolve) => {
+      gitProcess.on("close", resolve);
+    });
+
+    // Decode collected buffers to strings
+    const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
+    const stderr = Buffer.concat(stderrChunks).toString("utf-8");
+
+    if (exitCode !== 0) {
+      throw new Error(`Git command failed: ${stderr || "Unknown error"}`);
+    }
+
+    // Security: Use os.tmpdir() for secure temp directory location
+    const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "guidemd-diff-"));
     const tempFile = path.join(tempDir, "HEAD-GUIDE.md");
+    
+    // Security: Ensure tempFile is within tempDir (path traversal check)
+    const resolvedTempDir = path.resolve(tempDir);
+    const resolvedTempFile = path.resolve(tempFile);
+    if (!resolvedTempFile.startsWith(resolvedTempDir + path.sep)) {
+      throw new Error("Security: Temp file path traversal detected");
+    }
+    
     await fs.promises.writeFile(tempFile, stdout, "utf-8");
 
     try {
       const result = diffGuides(tempFile, filePath, options);
       return result;
     } finally {
-      // Cleanup temp file
-      await fs.promises.rm(tempDir, { recursive: true, force: true });
+      // Security: Verify tempDir is in temp directory before deletion
+      const resolvedOsTemp = path.resolve(os.tmpdir());
+      if (resolvedTempDir.startsWith(resolvedOsTemp + path.sep) || resolvedTempDir === resolvedOsTemp) {
+        await fs.promises.rm(tempDir, { recursive: true, force: true });
+      }
     }
   } catch (error) {
-    throw new Error(`Failed to get git version: ${error}`);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to get git version: ${errorMessage}`);
   }
 }
 

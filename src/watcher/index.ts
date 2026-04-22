@@ -169,30 +169,51 @@ export function startWatch(options: WatchOptions, onResult?: (result: WatchResul
     },
   });
   
-  let isRunning = false;
-  
+  // Security: Async mutex to prevent race conditions in concurrent lint runs
+  let runPromise: Promise<void> | null = null;
+  let runQueued = false;
+
   // Handler for file changes
   const handleChange = async () => {
-    if (isRunning) return; // Prevent concurrent runs
-    isRunning = true;
-    
-    clearScreen();
-    printHeader(filePath);
-    printTimestamp();
-    
-    try {
-      const result = await runLint(filePath, options.skipSecretScan);
-      printResults(result, filePath);
-      // Call the callback if provided for programmatic use
-      onResult?.(result);
-    } catch (error) {
-      console.log(chalk.red(`  ${ICONS.error} Error running lint: ${error instanceof Error ? error.message : "Unknown error"}`));
-    } finally {
-      isRunning = false;
-      console.log(chalk.dim("\n  Waiting for changes..."));
+    // Security: If a run is queued, don't queue another
+    if (runQueued) return;
+
+    // Security: If currently running, queue a follow-up run
+    if (runPromise) {
+      runQueued = true;
+      try {
+        await runPromise;
+      } finally {
+        runQueued = false;
+      }
+      // After the running one completes, check if we're still the queued run
+      if (!runQueued) {
+        return handleChange();
+      }
+      return;
     }
+
+    // Security: Create the promise immediately to block other concurrent calls
+    runPromise = (async () => {
+      clearScreen();
+      printHeader(filePath);
+      printTimestamp();
+    
+      try {
+        const result = await runLint(filePath, options.skipSecretScan);
+        printResults(result, filePath);
+        // Call the callback if provided for programmatic use
+        onResult?.(result);
+      } catch (error) {
+        console.log(chalk.red(`  ${ICONS.error} Error running lint: ${error instanceof Error ? error.message : "Unknown error"}`));
+      } finally {
+        // Security: Clear the promise reference to allow new runs
+        runPromise = null;
+        console.log(chalk.dim("\n  Waiting for changes..."));
+      }
+    })();
   };
-  
+
   // Set up event handlers
   watcher
     .on("change", handleChange)

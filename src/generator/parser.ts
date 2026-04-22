@@ -2,6 +2,22 @@
 // Lightweight {{variable}} parser — no external dependencies.
 // Supports: {{field}}, {{#if field}}...{{/if}}, {{#each field}}...{{/each}}
 
+// Security: Maximum recursion depth for template rendering
+const MAX_TEMPLATE_DEPTH = 50;
+
+/**
+ * Security: Escapes HTML entities to prevent XSS injection.
+ * This is critical when rendering untrusted data into templates.
+ */
+function escapeHtml(unsafe: string): string {
+  return unsafe
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 function getValue(obj: unknown, path: string): unknown {
   const parts = path.split(".");
   let current: unknown = obj;
@@ -23,7 +39,16 @@ function isTruthy(value: unknown): boolean {
   return false;
 }
 
-export function renderTemplate(template: string, data: Record<string, unknown>): string {
+export function renderTemplate(
+  template: string,
+  data: Record<string, unknown>,
+  depth: number = 0
+): string {
+  // Security: Prevent stack overflow from deeply nested templates
+  if (depth > MAX_TEMPLATE_DEPTH) {
+    throw new Error(`Template rendering exceeded maximum recursion depth (${MAX_TEMPLATE_DEPTH})`);
+  }
+
   let result = template;
 
   // ── Iteration: {{#each field}} ... {{/each}}
@@ -38,7 +63,7 @@ export function renderTemplate(template: string, data: Record<string, unknown>):
             typeof item === "object" && item !== null
               ? { ...data, ...item }
               : { ...data, this: item };
-          return renderTemplate(inner, itemData);
+          return renderTemplate(inner, itemData, depth + 1);
         })
         .join("");
     }
@@ -49,7 +74,7 @@ export function renderTemplate(template: string, data: Record<string, unknown>):
     /\{\{#if\s+(\w+(?:\.\w+)*)\}\}([\s\S]*?)\{\{\/if\}\}/g,
     (_match, path: string, inner: string) => {
       const value = getValue(data, path);
-      return isTruthy(value) ? renderTemplate(inner, data) : "";
+      return isTruthy(value) ? renderTemplate(inner, data, depth + 1) : "";
     }
   );
 
@@ -58,18 +83,20 @@ export function renderTemplate(template: string, data: Record<string, unknown>):
     /\{\{#unless\s+(\w+(?:\.\w+)*)\}\}([\s\S]*?)\{\{\/unless\}\}/g,
     (_match, path: string, inner: string) => {
       const value = getValue(data, path);
-      return !isTruthy(value) ? renderTemplate(inner, data) : "";
+      return !isTruthy(value) ? renderTemplate(inner, data, depth + 1) : "";
     }
   );
 
   // ── Variable substitution: {{field}} or {{field.subfield}}
+  // Security: HTML escape all string values to prevent injection
   result = result.replace(/\{\{(\w+(?:\.\w+)*)\}\}/g, (_match, path: string) => {
     const value = getValue(data, path);
     if (value === undefined || value === null) return "";
-    if (typeof value === "string") return value;
+    if (typeof value === "string") return escapeHtml(value);
     if (typeof value === "number") return String(value);
     if (typeof value === "boolean") return String(value);
-    return "";
+    // Security: Convert any other types to string and escape (handles objects with custom toString)
+    return escapeHtml(String(value));
   });
 
   return result;

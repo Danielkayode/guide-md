@@ -3,6 +3,46 @@ import fs from "node:fs";
 import path from "node:path";
 import matter from "gray-matter";
 
+// ─── Security: Output Escaping Utilities ────────────────────────────────────
+
+/**
+ * Escapes special XML/HTML characters to prevent injection attacks.
+ * Critical for adapters generating XML-wrapped content (Claude, Windsurf).
+ */
+function escapeXml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;"); // Numeric entity for HTML4 compatibility
+}
+
+/**
+ * Escapes special Markdown characters to prevent formatting injection.
+ * Used for markdown-based adapters (Cursor, Agents, Copilot).
+ */
+function escapeMarkdown(str: string): string {
+  // Escape characters that have special meaning in Markdown
+  return str
+    .replace(/\\/g, "\\\\")  // Backslash first
+    .replace(/\*/g, "\\*")
+    .replace(/_/g, "\\_")
+    .replace(/\[/g, "\\[")
+    .replace(/\]/g, "\\]")
+    .replace(/</g, "\\<")
+    .replace(/>/g, "\\>")
+    .replace(/`/g, "\\`");
+}
+
+/**
+ * Safely joins array values for display, escaping each element.
+ */
+function safeJoin(arr: string[] | undefined, separator: string, escapeFn: (s: string) => string): string {
+  if (!arr || arr.length === 0) return "";
+  return arr.map(escapeFn).join(separator);
+}
+
 export type ExportTarget = "claude" | "cursor" | "windsurf" | "agents" | "copilot" | "aider" | "all";
 
 export interface ExportResult {
@@ -21,27 +61,45 @@ interface ExporterAdapter {
 const ClaudeAdapter: ExporterAdapter = {
   fileName: "CLAUDE.md",
   transform: (data, instructions) => {
+    // Security: Escape all dynamic content to prevent XML/template injection
+    const safeProject = escapeXml(data.project ?? "untitled-project");
+    const safeDescription = data.description ? escapeXml(data.description) : "";
+    const safeLanguage = Array.isArray(data.language) 
+      ? safeJoin(data.language, ", ", escapeXml) 
+      : escapeXml(data.language ?? "typescript");
+    const safeRuntime = data.runtime ? escapeXml(data.runtime) : "";
+    const safeFramework = data.framework 
+      ? (Array.isArray(data.framework) 
+          ? safeJoin(data.framework, ", ", escapeXml) 
+          : escapeXml(data.framework))
+      : "";
+    const safeErrorProtocol = escapeXml(data.error_protocol ?? "verbose");
+    const safeIndentation = data.code_style?.indentation ? escapeXml(data.code_style.indentation) : "";
+    const safeNaming = data.code_style?.naming_convention ? escapeXml(data.code_style.naming_convention) : "";
+    const safeTestFramework = data.testing?.framework ? escapeXml(data.testing.framework) : "";
+    const safeInstructions = escapeXml(instructions.trim());
+
     return `<context>
-# Project: ${data.project}
-${data.description || ""}
+# Project: ${safeProject}
+${safeDescription}
 
 ## Tech Stack
-- Language: ${Array.isArray(data.language) ? data.language.join(", ") : data.language}
-${data.runtime ? `- Runtime: ${data.runtime}` : ""}
-${data.framework ? `- Framework: ${Array.isArray(data.framework) ? data.framework.join(", ") : data.framework}` : ""}
+- Language: ${safeLanguage}
+${safeRuntime ? `- Runtime: ${safeRuntime}` : ""}
+${safeFramework ? `- Framework: ${safeFramework}` : ""}
 ${data.strict_typing ? "- Strict Typing: Enabled" : ""}
 </context>
 
 <rules>
 ## Coding Standards
-- Error Protocol: ${data.error_protocol}
-${data.code_style ? `- Indentation: ${data.code_style.indentation}` : ""}
-${data.code_style ? `- Naming: ${data.code_style.naming_convention}` : ""}
+- Error Protocol: ${safeErrorProtocol}
+${safeIndentation ? `- Indentation: ${safeIndentation}` : ""}
+${safeNaming ? `- Naming: ${safeNaming}` : ""}
 
-${data.testing?.required ? `## Testing\n- Framework: ${data.testing.framework}\n- Coverage: ${data.testing.coverage_threshold}%` : ""}
+${data.testing?.required ? `## Testing\n- Framework: ${safeTestFramework}\n- Coverage: ${Number(data.testing.coverage_threshold) || 0}%` : ""}
 
 ## Instructions
-${instructions.trim()}
+${safeInstructions}
 </rules>`;
   }
 };
@@ -55,10 +113,15 @@ const CursorAdapter: ExporterAdapter = {
       .map(line => line.startsWith("-") || line.startsWith("#") ? line : `- ${line}`)
       .join("\n");
 
+    // Security: Escape YAML values to prevent injection
+    const safeProject = escapeYamlString(data.project ?? "untitled-project");
+    const safeEntryPoints = (data.context?.entry_points || []).map((ep: string) => escapeYamlString(ep));
+    const safeRules = escapeYamlString("Strict adherence required. Use @-directives to reference files mentioned in entry_points.");
+
     const metadata = {
-      project: data.project,
-      context: data.context?.entry_points || [],
-      rules: "Strict adherence required. Use @-directives to reference files mentioned in entry_points."
+      project: safeProject,
+      context: safeEntryPoints,
+      rules: safeRules
     };
 
     return matter.stringify(`\n# Project Rules\n${rules}`, metadata);
@@ -68,13 +131,16 @@ const CursorAdapter: ExporterAdapter = {
 const WindsurfAdapter: ExporterAdapter = {
   fileName: ".windsurfrules",
   transform: (data, instructions) => {
-    return `# Windsurf Rules: ${data.project}\n\n${ClaudeAdapter.transform(data, instructions)}`;
+    // Security: Escape project name in header to prevent injection
+    const safeProject = escapeXml(data.project ?? "untitled-project");
+    return `# Windsurf Rules: ${safeProject}\n\n${ClaudeAdapter.transform(data, instructions)}`;
   }
 };
 
 const AgentsAdapter: ExporterAdapter = {
   fileName: "AGENTS.md",
   transform: (data, instructions) => {
+    // Security: Escape all dynamic content for Markdown output
     const guardrails = data.guardrails;
     const rules: string[] = [];
     
@@ -92,34 +158,47 @@ const AgentsAdapter: ExporterAdapter = {
     }
     if (data.code_style) {
       const maxLineLength = data.code_style.max_line_length ?? 100;
-      const indentation = data.code_style.indentation ?? "2 spaces";
-      const namingConvention = data.code_style.naming_convention ?? "camelCase";
-      rules.push(`- **Code Style**: Max line length ${maxLineLength}, ${indentation} indentation, ${namingConvention} naming`);
+      const safeIndentation = escapeMarkdown(data.code_style.indentation ?? "2 spaces");
+      const safeNaming = escapeMarkdown(data.code_style.naming_convention ?? "camelCase");
+      rules.push(`- **Code Style**: Max line length ${maxLineLength}, ${safeIndentation} indentation, ${safeNaming} naming`);
     }
     if (data.error_protocol) {
-      rules.push(`- **Error Protocol**: ${data.error_protocol}`);
+      rules.push(`- **Error Protocol**: ${escapeMarkdown(data.error_protocol)}`);
     }
     if (data.strict_typing) {
       rules.push("- **Strict Typing**: Always use explicit types; never 'any' or untyped params");
     }
 
-    const language = Array.isArray(data.language) ? data.language.join(", ") : (data.language ?? "typescript");
-    const runtime = data.runtime ? `- **Runtime**: ${data.runtime}` : "";
-    const framework = data.framework ? `- **Framework**: ${Array.isArray(data.framework) ? data.framework.join(", ") : data.framework}` : "";
-    const testing = data.testing?.required ? `- **Testing**: ${data.testing.framework ?? "unknown"} with ${data.testing.coverage_threshold ?? 0}% coverage` : "";
-    const architecture = data.context?.architecture_pattern ? `- **Architecture**: ${data.context.architecture_pattern}` : "";
+    const safeProject = escapeMarkdown(data.project ?? "untitled-project");
+    const safeDescription = data.description ? escapeMarkdown(data.description) : "";
+    const safeLanguage = Array.isArray(data.language) 
+      ? safeJoin(data.language, ", ", escapeMarkdown) 
+      : escapeMarkdown(data.language ?? "typescript");
+    const safeRuntime = data.runtime ? `- **Runtime**: ${escapeMarkdown(data.runtime)}` : "";
+    const safeFramework = data.framework 
+      ? `- **Framework**: ${Array.isArray(data.framework) 
+          ? safeJoin(data.framework, ", ", escapeMarkdown) 
+          : escapeMarkdown(data.framework)}` 
+      : "";
+    const safeTesting = data.testing?.required 
+      ? `- **Testing**: ${escapeMarkdown(data.testing.framework ?? "unknown")} with ${data.testing.coverage_threshold ?? 0}% coverage` 
+      : "";
+    const safeArchitecture = data.context?.architecture_pattern 
+      ? `- **Architecture**: ${escapeMarkdown(data.context.architecture_pattern)}` 
+      : "";
+    const safeInstructions = escapeMarkdown(instructions.trim());
 
-    return `# ${data.project ?? "untitled-project"}
+    return `# ${safeProject}
 
-${data.description ?? ""}
+${safeDescription}
 
 ## Constraints
 
-- **Language**: ${language}
-${runtime}
-${framework}
-${testing}
-${architecture}
+- **Language**: ${safeLanguage}
+${safeRuntime}
+${safeFramework}
+${safeTesting}
+${safeArchitecture}
 
 ## Rules
 
@@ -127,51 +206,62 @@ ${rules.length > 0 ? rules.join("\n") : "- Follow standard best practices for th
 
 ## Instructions
 
-${(instructions ?? "").trim()}`;
+${safeInstructions}`;
   }
 };
 
 const CopilotAdapter: ExporterAdapter = {
   fileName: ".github/copilot-instructions.md",
   transform: (data, instructions) => {
-    const language = Array.isArray(data.language) ? data.language.join(", ") : (data.language ?? "typescript");
-    const runtime = data.runtime ? `- **Runtime**: ${data.runtime}` : "";
-    const framework = data.framework ? `- **Framework**: ${Array.isArray(data.framework) ? data.framework.join(", ") : data.framework}` : "";
-    const strictTyping = data.strict_typing ? "Enabled" : "Disabled";
-    const errorProtocol = data.error_protocol ?? "verbose";
+    // Security: Escape all dynamic content for Markdown/HTML output
+    const safeLanguage = Array.isArray(data.language) 
+      ? safeJoin(data.language, ", ", escapeMarkdown) 
+      : escapeMarkdown(data.language ?? "typescript");
+    const safeRuntime = data.runtime ? `- **Runtime**: ${escapeMarkdown(data.runtime)}` : "";
+    const safeFramework = data.framework 
+      ? `- **Framework**: ${Array.isArray(data.framework) 
+          ? safeJoin(data.framework, ", ", escapeMarkdown) 
+          : escapeMarkdown(data.framework)}` 
+      : "";
+    const safeStrictTyping = data.strict_typing ? "Enabled" : "Disabled";
+    const safeErrorProtocol = escapeMarkdown(data.error_protocol ?? "verbose");
     
-    const codeStyle = data.code_style ? `## Code Style
+    const safeCodeStyle = data.code_style ? `## Code Style
 
 - Max line length: ${data.code_style.max_line_length ?? 100}
-- Indentation: ${data.code_style.indentation ?? "2 spaces"}
-- Naming convention: ${data.code_style.naming_convention ?? "camelCase"}
+- Indentation: ${escapeMarkdown(data.code_style.indentation ?? "2 spaces")}
+- Naming convention: ${escapeMarkdown(data.code_style.naming_convention ?? "camelCase")}
 ${data.code_style.max_function_lines ? `- Max function lines: ${data.code_style.max_function_lines}` : ""}
 ` : "";
     
-    const guardrails = data.guardrails ? `## Guardrails
+    const safeGuardrails = data.guardrails ? `## Guardrails
 
 ${data.guardrails.no_hallucination ? "- Do not invent APIs, packages, or type signatures\n" : ""}${data.guardrails.scope_creep_prevention ? "- Only modify files/functions explicitly referenced in the prompt\n" : ""}${data.guardrails.dry_run_on_destructive ? "- Preview destructive operations before executing\n" : ""}${data.guardrails.cite_sources ? "- Cite documentation sources when using unfamiliar APIs\n" : ""}` : "";
     
+    const safeProject = escapeMarkdown(data.project ?? "untitled-project");
+    const safeDescription = data.description ? escapeMarkdown(data.description) : "";
+    const safeInstructions = escapeMarkdown(instructions.trim());
+    
     return `<!-- guidemd:generated -->
-# ${data.project ?? "untitled-project"}
+# ${safeProject}
 
-${data.description ?? ""}
+${safeDescription}
 
 ## Project Context
 
-- **Language**: ${language}
-${runtime}
-${framework}
-- **Strict Typing**: ${strictTyping}
-- **Error Protocol**: ${errorProtocol}
+- **Language**: ${safeLanguage}
+${safeRuntime}
+${safeFramework}
+- **Strict Typing**: ${safeStrictTyping}
+- **Error Protocol**: ${safeErrorProtocol}
 
-${codeStyle}
+${safeCodeStyle}
 
-${guardrails}
+${safeGuardrails}
 
 ## AI Instructions
 
-${(instructions ?? "").trim()}`;
+${safeInstructions}`;
   }
 };
 
@@ -244,26 +334,26 @@ const AiderAdapter: ExporterAdapter = {
       "# https://aider.chat/docs/config/aider_conf.html"
     ];
     
-    // Add language hint as comment
+    // Add language hint as comment (Security: escape newlines for safe comments)
     if (data.language) {
       const lang = Array.isArray(data.language) ? data.language[0] : data.language;
-      lines.push(`# Language: ${lang}`);
+      lines.push(`# Language: ${String(lang).replace(/[\r\n]/g, "")}`);
     }
     
-    // Add framework hint as comment
+    // Add framework hint as comment (Security: escape newlines for safe comments)
     if (data.framework) {
       const fw = Array.isArray(data.framework) ? data.framework.join(", ") : data.framework;
-      lines.push(`# Framework: ${fw}`);
+      lines.push(`# Framework: ${String(fw).replace(/[\r\n]/g, "")}`);
     }
     
-    // Add code style as comment
+    // Add code style as comment (Security: ensure numeric value)
     if (data.code_style?.max_line_length) {
-      lines.push(`# Max line length: ${data.code_style.max_line_length}`);
+      lines.push(`# Max line length: ${Number(data.code_style.max_line_length) || 0}`);
     }
     
-    // Add error protocol as comment
+    // Add error protocol as comment (Security: escape newlines for safe comments)
     if (data.error_protocol) {
-      lines.push(`# Error protocol: ${data.error_protocol}`);
+      lines.push(`# Error protocol: ${String(data.error_protocol).replace(/[\r\n]/g, "")}`);
     }
     
     lines.push("");
@@ -320,13 +410,34 @@ export function exportGuide(data: GuideMdFrontmatter, instructions: string, targ
     
     try {
       // Ensure parent directories exist for nested paths like .github/copilot-instructions.md
+      // Security: Validate that parentDir is within targetDir to prevent path traversal
       const parentDir = path.dirname(filePath);
-      if (!fs.existsSync(parentDir)) {
-        fs.mkdirSync(parentDir, { recursive: true });
+      const resolvedParent = path.resolve(parentDir);
+      const resolvedTarget = path.resolve(targetDir);
+      if (!resolvedParent.startsWith(resolvedTarget + path.sep) && resolvedParent !== resolvedTarget) {
+        throw new Error(`Security: Parent directory escapes target directory: ${parentDir}`);
       }
       
-      fs.writeFileSync(filePath, content, "utf-8");
-      results.push({ target: t, file: adapter.fileName, success: true });
+      // Create parent directories recursively
+      fs.mkdirSync(parentDir, { recursive: true });
+
+      // Security: Atomic write - write to temp then rename to prevent partial writes
+      const tempPath = `${filePath}.tmp`;
+      try {
+        fs.writeFileSync(tempPath, content, "utf-8");
+        fs.renameSync(tempPath, filePath);
+        results.push({ target: t, file: adapter.fileName, success: true });
+      } catch (error) {
+        // Clean up temp file if it exists to prevent leaving orphaned files
+        try {
+          if (fs.existsSync(tempPath)) {
+            fs.unlinkSync(tempPath);
+          }
+        } catch {
+          // Ignore cleanup errors
+        }
+        throw error; // Re-throw the original error
+      }
     } catch (e) {
       results.push({ target: t, file: adapter.fileName, success: false });
     }

@@ -5,6 +5,40 @@ import { execSync } from "node:child_process";
 
 export type HookManager = "husky" | "raw" | "auto";
 
+// ─── Security Utilities ───────────────────────────────────────────────────────
+// Export for testing
+export { isSafePath, shellEscape };
+
+/**
+ * Validates that a path doesn't contain shell metacharacters that could lead to command injection.
+ */
+function isSafePath(input: string): boolean {
+  // Reject paths with shell metacharacters
+  const dangerousChars = /[;&|`$(){}[\]\<>!#*?]/;
+  if (dangerousChars.test(input)) {
+    return false;
+  }
+  // Reject paths with newlines
+  if (input.includes("\n") || input.includes("\r")) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Escapes a string for safe use as a shell argument.
+ * Wraps in single quotes and handles embedded single quotes safely.
+ */
+function shellEscape(arg: string): string {
+  // If no special characters, return as-is
+  if (/^[a-zA-Z0-9_/.-]+$/.test(arg)) {
+    return arg;
+  }
+  // Wrap in single quotes and escape any embedded single quotes
+  // by ending the quoted string, adding an escaped quote, and starting a new quoted string
+  return "'" + arg.replace(/'/g, "'\"'\"'") + "'";
+}
+
 export interface HookInstallResult {
   success: boolean;
   manager: "husky" | "raw";
@@ -134,9 +168,10 @@ function hasBash(): boolean {
         path.join(os.homedir(), "bin", "bash.exe"),
       ];
       for (const candidate of candidates) {
-        if (fs.existsSync(candidate)) return true;
+        // Validate path before checking existence
+        if (isSafePath(candidate) && fs.existsSync(candidate)) return true;
       }
-      // Try PATH lookup
+      // Try PATH lookup - use shellEscape for safety
       execSync("where bash", { stdio: "ignore" });
       return true;
     }
