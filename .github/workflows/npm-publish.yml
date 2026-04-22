@@ -2,6 +2,8 @@
 name: Publish to NPM
 
 on:
+  push:
+    branches: [main, master]
   release:
     types: [published]
 
@@ -10,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # ✅ Only test on Node versions supported by your dependencies
+        # Only test on Node versions supported by your dependencies
         # rolldown, vite, vitest require: ^20.19.0 || >=22.12.0
         node-version: [20, 22]
     steps:
@@ -41,8 +43,8 @@ jobs:
   publish:
     needs: test
     runs-on: ubuntu-latest
-    # ✅ Only publish if all tests passed AND this is not a pre-release (optional)
-    if: github.event.release.prerelease == false
+    # ✅ Run on push to main, or on non-prerelease releases
+    if: github.event_name == 'push' || (github.event_name == 'release' && github.event.release.prerelease == false)
     permissions:
       contents: read
       id-token: write  # Required for npm provenance
