@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 import { program } from "commander";
 import chalk from "chalk";
 import { lintGuideFile, fixGuideFile, LintResult, syncGuideFile, detectDrift, detectLanguage } from "../linter/index.js";
