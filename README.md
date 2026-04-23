@@ -23,17 +23,17 @@
 
 ## 🛠️ Installation
 
-**Requirements:** Node.js 18 or higher
+**Requirements:** Node.js 20 or higher
 
 ```bash
-npm install -g @guidemd/linter
+npm install -g @prismteam/linter
 ```
 
 ## 📖 Quick Start
 
 ```bash
 # 1. Install the CLI
-npm install -g @guidemd/linter
+npm install -g @prismteam/linter
 
 # 2. Initialize a new GUIDE.md (with smart stack detection)
 guidemd init
