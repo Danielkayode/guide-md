@@ -65,11 +65,12 @@ jobs:
       - name: Build package
         run: npm run build
 
-      # ✅ Optional but recommended: Verify version matches release tag
+      # ✅ Only verify version on release events (skip for branch pushes)
       - name: Verify version matches release tag
+        if: github.event_name == 'release'
         run: |
           PKG_VERSION=$(node -p "require('./package.json').version")
-          TAG_VERSION="${GITHUB_REF#refs/tags/}"
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
           if [[ "$PKG_VERSION" != "$TAG_VERSION" ]]; then
             echo "::error::Package version ($PKG_VERSION) does not match release tag ($TAG_VERSION)"
             exit 1
