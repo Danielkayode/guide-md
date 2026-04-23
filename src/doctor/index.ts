@@ -1,12 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { GuideMdFrontmatter } from "../schema/index.js";
 import chalk from "chalk";
 
 // ─── Load External Configuration ───────────────────────────────────────────────
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// Use __dirname directly (CJS build)
 const CONFIG_PATH = path.join(__dirname, "signatures.json");
 
 interface SignatureConfig {

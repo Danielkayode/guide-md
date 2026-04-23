@@ -1,11 +1,11 @@
 {
   "name": "@prismteam/linter",
-  "version": "0.2.3",
+  "version": "0.2.2.1",
   "description": "The official linter for GUIDE.md — the AI Context Interface standard",
   "type": "module",
   "main": "./dist/cli/index.js",
   "bin": {
-    "guidemd": "dist/cli/index.js"
+    "guidemd": "dist/cli/index.cjs"
   },
   "files": [
     "dist",
@@ -14,7 +14,7 @@
   ],
   "scripts": {
     "build": "npm run build:bundle",
-    "build:bundle": "esbuild src/cli/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/cli/index.js --banner:js=\"#!/usr/bin/env node\" --external:esbuild",
+    "build:bundle": "esbuild src/cli/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/cli/index.cjs --banner:js=\"#!/usr/bin/env node\" --external:esbuild && copy src\\doctor\\signatures.json dist\\cli\\signatures.json",
     "build:typecheck": "tsc --noEmit",
     "dev": "tsx src/cli/index.ts",
     "lint:self": "tsx src/cli/index.ts lint GUIDE.md",
