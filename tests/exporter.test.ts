@@ -194,7 +194,7 @@ Don't use global state.
     it("should export to all targets when target is 'all'", () => {
       const results = exportGuide(mockData, instructions, tempDir, "all");
 
-      expect(results.length).toBe(6); // claude, cursor, windsurf, agents, copilot, aider
+      expect(results.length).toBe(7); // claude, cursor, windsurf, agents, copilot, aider, json-schema
       expect(results.every(r => r.success)).toBe(true);
 
       // Verify all files were created
@@ -204,6 +204,7 @@ Don't use global state.
       expect(fs.existsSync(path.join(tempDir, "AGENTS.md"))).toBe(true);
       expect(fs.existsSync(path.join(tempDir, ".github/copilot-instructions.md"))).toBe(true);
       expect(fs.existsSync(path.join(tempDir, ".aider.conf.yml"))).toBe(true);
+      expect(fs.existsSync(path.join(tempDir, "guidemd.schema.json"))).toBe(true);
     });
   });
 

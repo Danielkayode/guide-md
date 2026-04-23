@@ -24,6 +24,19 @@ import path from "node:path";
 import matter from "gray-matter";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { detectParadigm } from "../linter/sync.js";
+import { fileURLToPath } from "node:url";
+
+// ─── Version ───────────────────────────────────────────────────────────────────
+// Read version from package.json so --version always matches the published package
+const PKG_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../package.json");
+const PKG_VERSION = (() => {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(PKG_PATH, "utf-8"));
+    return pkg.version || "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+})();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const ICONS = {
@@ -176,7 +189,7 @@ interface InitOptions {
 program
   .name("guidemd")
   .description("The official CLI for the GUIDE.md AI Context Interface standard")
-  .version("0.1.0");
+  .version(PKG_VERSION);
 
 // ── guidemd lint ──────────────────────────────────────────────────────────────
 program
@@ -1048,8 +1061,8 @@ jobs:
         with:
           node-version: '18'
 
-      - name: Install @guidemd/linter
-        run: npm install -g @guidemd/linter
+      - name: Install @prismteam/linter
+        run: npm install -g @prismteam/linter
 
       - name: Lint GUIDE.md
         id: lint

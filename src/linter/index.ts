@@ -80,9 +80,9 @@ const WARNING_RULES: WarningRule[] = [
   },
   {
     field: "ai_model_target",
-    check: (data, filePath) => !data.ai_model_target,
+    check: (data, filePath) => !data.ai_model_target && !data.ai_capabilities,
     message:
-      "No ai_model_target specified. Pinning to a model ensures consistent behavior across different AI tools.",
+      "No ai_model_target or ai_capabilities specified. Pinning to a model or capability set ensures consistent behavior across different AI tools.",
   },
   {
     field: "last_updated",

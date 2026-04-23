@@ -182,7 +182,20 @@ export const GuideMdSchema = z
     ai_model_target: z
       .union([z.string(), z.array(z.string())])
       .optional()
-      .describe('Models this guide is tuned for, e.g. ["claude-3-5-sonnet", "gpt-4o"]'),
+      .describe('Legacy: specific model names rot quickly. Prefer ai_capabilities.'),
+
+    ai_capabilities: z
+      .array(z.enum([
+        "tool_use",
+        "long_context",
+        "structured_output",
+        "code_execution",
+        "vision",
+        "reasoning",
+        "agentic",
+      ]))
+      .optional()
+      .describe("Capability-based targeting: survives model churn. e.g. ['tool_use', 'long_context']"),
 
     // ── Code Quality ─────────────────────────────────────────────────────
     code_style: CodeStyleSchema.optional(),

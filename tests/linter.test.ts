@@ -101,7 +101,29 @@ error_protocol: verbose
 
       const warning = result.diagnostics.find(d => d.field === "ai_model_target");
       expect(warning).toBeDefined();
-      expect(warning?.message).toContain("No ai_model_target specified");
+      expect(warning?.message).toContain("No ai_model_target or ai_capabilities");
+    });
+
+    it("should NOT warn when ai_capabilities is specified instead of ai_model_target", async () => {
+      const content = `---
+guide_version: "1.0.0"
+project: "test-project"
+language: typescript
+strict_typing: true
+error_protocol: verbose
+ai_capabilities:
+  - tool_use
+  - long_context
+---
+# Test
+`;
+      const filePath = path.join(tempDir, "GUIDE.md");
+      fs.writeFileSync(filePath, content);
+
+      const result = await lintGuideFile(filePath);
+
+      const warning = result.diagnostics.find(d => d.field === "ai_model_target");
+      expect(warning).toBeUndefined();
     });
 
     it("should warn when GUIDE.md is stale (last_updated > 6 months)", async () => {

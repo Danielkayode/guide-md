@@ -1,11 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { GuideMdFrontmatter } from "../schema/index.js";
 import chalk from "chalk";
 
 // ─── Load External Configuration ───────────────────────────────────────────────
 
-// Use __dirname directly (CJS build)
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = path.join(__dirname, "signatures.json");
 
 interface SignatureConfig {
@@ -389,7 +390,7 @@ export function detectFramework(projectRoot: string = process.cwd()): string | n
   for (const fw of frameworkPriority) {
     const depVersion = allDeps[fw.key];
     if (depVersion !== undefined) {
-      const version = depVersion.replace(/[\^~]/, "").split(".")[0];
+      const version = depVersion.replace(/^[\^~>=<]+/, "").trim();
       return version ? `${fw.name}@${version}` : fw.name;
     }
   }

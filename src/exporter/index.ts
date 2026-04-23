@@ -1,7 +1,8 @@
-import { GuideMdFrontmatter } from "../schema/index.js";
+import { GuideMdFrontmatter, GuideMdSchema } from "../schema/index.js";
 import fs from "node:fs";
 import path from "node:path";
 import matter from "gray-matter";
+import { zodToJsonSchema } from "zod-to-json-schema";
 
 // ─── Security: Output Escaping Utilities ────────────────────────────────────
 
@@ -43,7 +44,7 @@ function safeJoin(arr: string[] | undefined, separator: string, escapeFn: (s: st
   return arr.map(escapeFn).join(separator);
 }
 
-export type ExportTarget = "claude" | "cursor" | "windsurf" | "agents" | "copilot" | "aider" | "all";
+export type ExportTarget = "claude" | "cursor" | "windsurf" | "agents" | "copilot" | "aider" | "json-schema" | "all";
 
 export interface ExportResult {
   target: string;
@@ -382,13 +383,37 @@ const AiderAdapter: ExporterAdapter = {
   }
 };
 
+const JsonSchemaAdapter: ExporterAdapter = {
+  fileName: "guidemd.schema.json",
+  transform: () => {
+    // Generate JSON Schema from Zod for language-agnostic validation
+    const jsonSchema = zodToJsonSchema(GuideMdSchema, {
+      name: "GuideMdFrontmatter",
+      $refStrategy: "none",
+      target: "jsonSchema7",
+    });
+
+    // Add metadata for better tooling support
+    const schemaWithMeta = {
+      $schema: "http://json-schema.org/draft-07/schema#",
+      $id: "https://guidemd.dev/schema/1.0.0.json",
+      title: "GUIDE.md Frontmatter Specification",
+      description: "Schema for AI Context Interface standard GUIDE.md files. Use this to validate GUIDE.md in any language.",
+      ...jsonSchema
+    };
+
+    return JSON.stringify(schemaWithMeta, null, 2);
+  }
+};
+
 const ADAPTERS: Record<string, ExporterAdapter> = {
   claude: ClaudeAdapter,
   cursor: CursorAdapter,
   windsurf: WindsurfAdapter,
   agents: AgentsAdapter,
   copilot: CopilotAdapter,
-  aider: AiderAdapter
+  aider: AiderAdapter,
+  "json-schema": JsonSchemaAdapter
 };
 
 // ─── Core Logic ─────────────────────────────────────────────────────────────

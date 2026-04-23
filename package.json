@@ -1,6 +1,6 @@
 {
   "name": "@prismteam/linter",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "The official linter for GUIDE.md — the AI Context Interface standard",
   "type": "module",
   "main": "./dist/cli/index.js",
@@ -14,7 +14,7 @@
   ],
   "scripts": {
     "build": "npm run build:bundle",
-    "build:bundle": "esbuild src/cli/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/cli/index.cjs --banner:js=\"#!/usr/bin/env node\" --external:esbuild && copy src\\doctor\\signatures.json dist\\cli\\signatures.json",
+    "build:bundle": "esbuild src/cli/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/cli/index.cjs --banner:js=\"#!/usr/bin/env node\" --external:esbuild && node -e \"require('fs').copyFileSync('src/doctor/signatures.json', 'dist/cli/signatures.json')\"",
     "build:typecheck": "tsc --noEmit",
     "dev": "tsx src/cli/index.ts",
     "lint:self": "tsx src/cli/index.ts lint GUIDE.md",
@@ -30,6 +30,7 @@
     "commander": "^12.1.0",
     "es-module-lexer": "^1.5.0",
     "gray-matter": "^4.0.3",
+    "typescript": "^5.3.3",
     "zod": "^3.23.8",
     "zod-to-json-schema": "^3.23.0"
   },
@@ -38,7 +39,6 @@
     "@vitest/coverage-v8": "^4.1.5",
     "esbuild": "^0.28.0",
     "tsx": "^4.7.0",
-    "typescript": "^5.3.3",
     "vitest": "^4.1.5"
   },
   "engines": {
