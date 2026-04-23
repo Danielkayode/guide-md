@@ -95,8 +95,9 @@ Key business rules:
 
 ## What NOT to do
 
-- **Do NOT add new CLI commands without updating the JSON output schema.** CI pipelines depend on `--json` stability.
-- **Do NOT use `any` types** — the project sets `strict_typing: true` in its own GUIDE.md. Use `unknown` and narrow instead.
-- **Do NOT mutate parsed GUIDE.md data in-place.** Always clone before merging or fixing; the MCP server may hold a reference to the same object.
-- **Do NOT assume framework versions in `detectFramework` match the semver in `package.json`.** `detectFramework` returns `next@14` (major only), but `checkFrameworkVersions` compares full semver. Align them before using.
-- **Do NOT let `ai_model_target` rot.** Model names change monthly. Prefer `ai_capabilities` (capability-based) or remove the field from required validation.
+- **Never** add new CLI commands without updating the JSON output schema; CI stability is a hard requirement.
+- **Don't** use the `any` type under any circumstances; use `unknown` and narrow types to respect strict_typing.
+- **Never** mutate parsed GUIDE.md data in-place; the MCP server requires immutable data references to prevent state drift.
+- **Don't** assume `detectFramework` (major version) and `checkFrameworkVersions` (full semver) are interchangeable.
+- **Never** hard-code specific model names in `ai_model_target`; always prefer capability-based checks in `ai_capabilities`.
+- **Don't** call `process.exit()` inside `src/linter/` or `src/parser/`; these calls are reserved strictly for `src/cli/index.ts`.
