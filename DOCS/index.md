@@ -4,6 +4,18 @@
 
 ---
 
+## Quick Decision Tree
+
+**What are you trying to do?**
+
+- 🚀 **Just getting started?** → See [Getting Started](#getting-started) below
+- 🔧 **Set up in my IDE?** → [Integration Options](#integration-options)
+- 📝 **See all CLI commands?** → [CLI Reference](./plugin/docs.md)
+- 💻 **Use in my code/programmatically?** → [API Reference](./API.md)
+- 🔌 **Build a plugin?** → [Plugin SDK](./PLUGINS.md)
+- 🏗️ **Understand how it works internally?** → [Architecture](./ARCHITECTURE.md) or [Feature Guide](./FEATURES.md)
+- 🤖 **Connect to Claude Desktop/Cursor MCP?** → [MCP Integration](./MCP_INTEGRATION.md)
+
 ## Quick Navigation
 
 | Document | Purpose |

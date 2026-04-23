@@ -275,7 +275,7 @@ The codebase now implements defense-in-depth security with multiple layers of pr
 
 ## Compliance Notes
 
-- **CWE Top 25:** Addresses 5 categories from 2023 Top 25
+- **CWE Top 25:** Addresses 5 categories from 2026 Top 25
 - **OWASP Top 10:** Mitigates Injection, Security Logging, and SSRF risks
 - **SLSA Level 1:** Audit trail supports supply chain security
 

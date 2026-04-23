@@ -902,7 +902,7 @@ See [`../examples/security-plugin/`](../examples/security-plugin/) for a complet
 
 ## Resources
 
-- [GUIDE.md Specification](./SPECIFICATION.md)
+- [GUIDE.md Specification](../GUIDE.md)
 - [Core Architecture](./FEATURES.md)
 - [Registry Modules](../fixtures/registry/)
 - [Plugin Examples](../examples/)

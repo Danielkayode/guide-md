@@ -45,7 +45,9 @@ guidemd verify
 
 ---
 
-## 📋 Complete Feature Reference
+## 📋 Quick Feature Reference
+
+> For detailed CLI documentation with all options and examples, see [CLI Reference](DOCS/plugin/docs.md).
 
 ### Core Validation
 
