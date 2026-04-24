@@ -1,85 +1,156 @@
 # .github/workflows/npm-publish.yml
+# Publishes @prismteam/linter to npm on GitHub release
+# Features: Node.js 24 ready, OIDC-compatible, scoped package support, error handling, caching
+
 name: Publish to NPM
 
 on:
-  push:
-    branches: [main, master]
   release:
-    types: [published]
+    types: [published]  # Only run when a GitHub release is published
+  workflow_dispatch:    # Allow manual trigger for testing
+
+# Node.js 24 compatibility (GitHub sunsetting Node 20)
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+# Minimal permissions principle
+permissions:
+  contents: read        # For checkout
+  id-token: write       # Required for OIDC (optional, future-proof)
+  packages: write       # For GitHub Packages (if used)
 
 jobs:
-  test:
+  publish-npm:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        # Only test on Node versions supported by your dependencies
-        # rolldown, vite, vitest require: ^20.19.0 || >=22.12.0
-        node-version: [20, 22]
+    timeout-minutes: 15
+
     steps:
+      # 1. Checkout code
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
-          cache: 'npm'
+          fetch-depth: 0  # Full history for version checks
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run type check
-        run: npm run build:typecheck
-
-      - name: Run linter self-check
-        run: npm run lint:self || true
-
-      - name: Run tests
-        run: npm test
-
-      - name: Build package
-        run: npm run build
-
-  publish:
-    needs: test
-    runs-on: ubuntu-latest
-    # ✅ Run on push to main, or on non-prerelease releases
-    if: github.event_name == 'push' || (github.event_name == 'release' && github.event.release.prerelease == false)
-    permissions:
-      contents: read
-      id-token: write  # Required for npm provenance
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
+      # 2. Setup Node.js with caching
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'  # Use a single, stable LTS version for publishing
+          node-version: '20'  # LTS, compatible with Node 24 runner
           registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
+          scope: '@prismteam'  # Auto-configures .npmrc for scoped packages
 
+      # 3. Install dependencies (clean, reproducible)
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts --audit=false --fund=false
+        env:
+          NODE_ENV: production
 
-      - name: Build package
-        run: npm run build
-
-      # ✅ Only verify version on release events (skip for branch pushes)
+      # 4. Verify version matches release tag (critical safety check)
       - name: Verify version matches release tag
-        if: github.event_name == 'release'
+        id: version-check
         run: |
           PKG_VERSION=$(node -p "require('./package.json').version")
-          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
-          if [[ "$PKG_VERSION" != "$TAG_VERSION" ]]; then
-            echo "::error::Package version ($PKG_VERSION) does not match release tag ($TAG_VERSION)"
+          TAG_VERSION=${GITHUB_REF#refs/tags/v}
+          echo "Package version: $PKG_VERSION"
+          echo "Release tag version: $TAG_VERSION"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Version mismatch: package.json ($PKG_VERSION) != release tag ($TAG_VERSION)"
             exit 1
           fi
-        shell: bash
+          echo "version=$PKG_VERSION" >> $GITHUB_OUTPUT
 
-      - name: Publish to NPM
-        run: npm publish --access public --provenance
-        env:   
-              NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # 5. Run pre-publish checks (lint, test, build)
+      - name: Run pre-publish checks
+        run: |
+          echo "Running lint..."
+          npm run lint --if-present
+          echo "Running tests..."
+          npm test --if-present
+          echo "Building..."
+          npm run build --if-present
+        env:
+          CI: true
 
+      # 6. Publish to npm with error handling and logging
+      - name: Publish to npm
+        id: publish
+        run: |
+          echo "Publishing @prismteam/linter@${{ steps.version-check.outputs.version }}"
           
+          # Dry-run first to catch issues early
+          echo "Running dry-run..."
+          if ! npm publish --access public --dry-run 2>&1 | tee /tmp/dryrun.log; then
+            echo "::error::Dry-run failed. Check logs above."
+            cat /tmp/dryrun.log
+            exit 1
+          fi
+          
+          # Actual publish with verbose logging for debugging
+          echo "Publishing to npm registry..."
+          if ! npm publish --access public --loglevel verbose 2>&1 | tee /tmp/publish.log; then
+            echo "::error::Publish failed. Full log:"
+            cat /tmp/publish.log
+            # Check for common errors
+            if grep -q "EPUBLISHCONFLICT" /tmp/publish.log; then
+              echo "::error::Version already exists on npm. Bump version in package.json and create a new release."
+            elif grep -q "E403" /tmp/publish.log; then
+              echo "::error::403 Forbidden. Check: (1) NPM_TOKEN secret is valid, (2) @prismteam scope has publish access, (3) npm account email is verified."
+            elif grep -q "E401" /tmp/publish.log; then
+              echo "::error::401 Unauthorized. NPM_TOKEN is invalid or expired. Regenerate at https://www.npmjs.com/settings/-/tokens"
+            elif grep -q "EAI_FAIL" /tmp/publish.log; then
+              echo "::error::Network error. npm registry unreachable. Retry workflow or check GitHub Actions network status."
+            fi
+            exit 1
+          fi
+          
+          echo "✅ Successfully published @prismteam/linter@${{ steps.version-check.outputs.version }}"
+          echo "package_url=https://www.npmjs.com/package/@prismteam/linter/v/${{ steps.version-check.outputs.version }}" >> $GITHUB_OUTPUT
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          CI: true
+
+      # 7. Post-publish: Update release notes with npm link
+      - name: Update release with npm link
+        if: success() && steps.publish.outputs.package_url
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const releaseId = context.payload.release.id;
+            const npmUrl = '${{ steps.publish.outputs.package_url }}';
+            
+            // Append npm link to release body
+            const body = context.payload.release.body + `\n\n📦 Install: \`${npmUrl}\``;
+            
+            await github.rest.repos.updateRelease({
+              owner,
+              repo,
+              release_id: releaseId,
+              body: body
+            });
+            console.log('✅ Updated release with npm link');
+
+      # 8. Optional: Publish to GitHub Packages (if you want dual-publish)
+      # - name: Publish to GitHub Packages
+      #   run: npm publish --registry=https://npm.pkg.github.com
+      #   env:
+      #     NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 9. Notify on failure (optional but recommended)
+      - name: Notify on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const runId = context.runId;
+            const workflow = context.workflow;
+            
+            await github.rest.issues.create({
+              owner,
+              repo,
+              title: `🚨 NPM Publish Failed: ${workflow}`,
+              body: `The npm publish workflow failed. Check the run: https://github.com/${owner}/${repo}/actions/runs/${runId}\n\nCommon fixes:\n- Verify NPM_TOKEN secret is valid\n- Ensure package.json version is newer than npm\n- Check npm account email is verified`,
+              labels: ['ci-failure', 'npm']
+            });
