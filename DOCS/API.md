@@ -24,6 +24,8 @@
 15. [MCP Server](#mcp-server)
 16. [Diff Module](#diff-module)
 17. [Watcher Module](#watcher-module)
+18. [Guardian Module](#guardian-module)
+19. [Skills Module](#skills-module)
 
 ---
 
@@ -892,6 +894,99 @@ const result = await diffGit("./GUIDE.md", "HEAD~1");
 
 ---
 
+## Guardian Module
+
+**Path:** `@guidemd/linter/guardian`
+
+Git hook management for preventing "Context Rot" by automatically validating GUIDE.md before each commit.
+
+### `installHook(manager?, projectRoot?): HookInstallResult`
+
+Installs a pre-commit hook that validates GUIDE.md and auto-syncs drift before allowing commits.
+
+```typescript
+import { installHook, detectHookManager } from "@guidemd/linter/guardian";
+
+// Auto-detect hook manager (husky or raw)
+const result = installHook("auto", "./my-project");
+
+if (result.success) {
+  console.log(`Hook installed: ${result.hookPath}`);
+} else {
+  console.log(`Hook not installed: ${result.message}`);
+}
+
+// Force specific manager
+const huskyResult = installHook("husky");
+const rawResult = installHook("raw");
+```
+
+**Parameters:**
+- `manager?: "auto" | "husky" | "raw"` - Hook installation method (default: `"auto"`)
+  - `"auto"` - Detects husky vs raw based on project structure
+  - `"husky"` - Installs to `.husky/pre-commit`
+  - `"raw"` - Installs to `.git/hooks/pre-commit`
+- `projectRoot?: string` - Project directory (default: `process.cwd()`)
+
+**Returns:** `HookInstallResult`
+- `success: boolean` - Whether installation succeeded
+- `manager: "husky" | "raw"` - Which manager was used
+- `hookPath: string` - Path to installed hook
+- `message: string` - Human-readable result description
+
+### `uninstallHook(manager?, projectRoot?): HookInstallResult`
+
+Removes the Guardian pre-commit hook.
+
+```typescript
+import { uninstallHook } from "@guidemd/linter/guardian";
+
+const result = uninstallHook("auto");
+console.log(result.message);
+```
+
+### `detectHookManager(projectRoot?): "husky" | "raw"`
+
+Detects which hook manager is appropriate for the project.
+
+```typescript
+import { detectHookManager } from "@guidemd/linter/guardian";
+
+const manager = detectHookManager("./my-project");
+// Returns: "husky" if .husky/ directory exists or husky in package.json
+// Returns: "raw" otherwise
+```
+
+### Hook Behavior
+
+The installed hook runs `guidemd lint GUIDE.md --sync` on every commit:
+
+1. **Validation Check**: Validates GUIDE.md against the schema
+2. **Drift Sync**: Auto-updates frontmatter if drift detected
+3. **Auto-Stage**: If GUIDE.md was modified by sync, stages the changes
+4. **Block on Error**: Prevents commit if validation fails
+
+**Hook Scripts Generated:**
+- **Husky**: `.husky/pre-commit` - Uses husky.sh for environment setup
+- **Raw Unix**: `.git/hooks/pre-commit` - Standard shell script
+- **Windows CMD**: `.git/hooks/pre-commit.cmd` - Windows batch wrapper
+- **Windows PS**: `.git/hooks/pre-commit.ps1` - PowerShell script
+
+### Types
+
+```typescript
+type HookManager = "husky" | "raw" | "auto";
+
+interface HookInstallResult {
+  success: boolean;
+  manager: "husky" | "raw";
+  hookPath: string;
+  message: string;
+}
+```
+
+---
+
 ## Watcher Module
 
 **Path:** `@guidemd/linter/watcher`
@@ -909,6 +1004,138 @@ await watchGuideFile("./GUIDE.md", {
     console.log(`Lint result: ${result.valid ? "valid" : "invalid"}`);
   }
 });
+```
+
+---
+
+## Skills Module
+
+**Path:** `@guidemd/linter/skills`
+
+The Skills module provides validation for directory-based capabilities defined by `SKILL.md` files. Skills are reusable AI capabilities that can be validated for security, style, and resource integrity.
+
+### `validateSkill(skillPath): SkillValidationResult`
+
+Validates a single SKILL.md file for schema compliance, third-person description style, resource integrity, and security heuristics.
+
+```typescript
+import { validateSkill } from "@guidemd/linter/skills";
+
+const result = validateSkill("./skills/code-analyzer/SKILL.md");
+
+if (result.valid) {
+  console.log(`Skill "${result.data?.name}" is valid`);
+} else {
+  console.error("Validation errors:", result.diagnostics);
+}
+```
+
+**Returns:** `SkillValidationResult`
+- `valid: boolean` - Whether the skill passed all validation checks
+- `file: string` - Absolute path to the SKILL.md file
+- `skillDir: string` - Directory containing the skill
+- `data: SkillFrontmatter | null` - Parsed frontmatter data (null if schema validation fails)
+- `diagnostics: SkillDiagnostic[]` - Array of validation issues
+
+### `validateAllSkills(projectPath): SkillValidationResult[]`
+
+Discovers and validates all SKILL.md files within a project directory.
+
+```typescript
+import { validateAllSkills } from "@guidemd/linter/skills";
+
+const results = validateAllSkills("./my-project");
+
+for (const result of results) {
+  console.log(`${result.data?.name}: ${result.valid ? "✅" : "❌"}`);
+}
+```
+
+### `detectSkills(projectPath): DetectedSkill[]`
+
+Recursively finds all SKILL.md files within a directory without validating them.
+
+```typescript
+import { detectSkills } from "@guidemd/linter/skills";
+
+const skills = detectSkills("./my-project");
+// Returns: [{ path: ".../code-analyzer/SKILL.md", name: "code-analyzer" }, ...]
+```
+
+### Skill Frontmatter Schema
+
+Skills use a strict frontmatter schema defined in `@guidemd/linter/skills/schema`:
+
+```typescript
+import { SkillSchema, SkillFrontmatter } from "@guidemd/linter/skills/schema";
+
+// Validation
+const result = SkillSchema.safeParse({
+  name: "code-analyzer",
+  description: "Analyzes code for potential issues and improvements",
+  version: "1.0.0",
+  tags: ["analysis", "code-quality"],
+  ai_capabilities: ["tool_use", "long_context"]
+});
+```
+
+**Required Fields:**
+- `name: string` - Kebab-case identifier (e.g., "code-analyzer")
+- `description: string` - Third-person description (20-500 chars, no "I/my/we/our")
+- `version: string` - Semantic version (e.g., "1.0.0")
+
+**Optional Fields:**
+- `author: string` - Plugin author
+- `tags: string[]` - Categorization tags
+- `ai_capabilities: string[]` - Required AI capabilities
+- `entry_point: string` - Primary execution file (relative to skill dir)
+- `dependencies: string[]` - External dependencies
+
+### Security Validation
+
+The Skills module performs extensive security checks:
+
+**High-Risk Command Detection:**
+- `rm -rf`, `sudo`, `curl | sh` patterns
+- `eval()`, `exec()`, `child_process` usage
+- `os.system()`, `subprocess.call` (Python)
+- Shell invocations, `mkfs`, `dd`, fork bombs
+- Overly permissive `chmod 777`
+
+**Path Traversal Detection:**
+- `../` relative traversal
+- URL-encoded traversal (`%2e%2e%2f`)
+- Sensitive file access (`/etc/passwd`, `~/.ssh`)
+- procfs access (`/proc/self`, `/proc/\d+`)
+- Absolute Windows paths (`C:\`)
+
+**Style Enforcement:**
+- Third-person description requirement (no first-person indicators)
+- Markdown link integrity (all `./relative-path` links must exist)
+
+### Types
+
+```typescript
+interface SkillDiagnostic {
+  severity: "error" | "warning";
+  source: "schema" | "style" | "security" | "resource";
+  field: string;
+  message: string;
+  received?: unknown;
+}
+
+interface SkillValidationResult {
+  valid: boolean;
+  file: string;
+  diagnostics: SkillDiagnostic[];
+  data: SkillFrontmatter | null;
+  skillDir: string;
+}
+
+interface DetectedSkill {
+  path: string;
+  name: string;
+}
 ```
 
 ---
@@ -979,6 +1206,9 @@ try {
 | `@guidemd/linter/mcp/resources` | `RESOURCES`, `readResource` |
 | `@guidemd/linter/diff` | `diffGuides`, `diffGit`, `DiffResult` |
 | `@guidemd/linter/watcher` | `watchGuideFile` |
+| `@guidemd/linter/guardian` | `installHook`, `uninstallHook`, `detectHookManager` |
+| `@guidemd/linter/skills` | `validateSkill`, `validateAllSkills`, `detectSkills` |
+| `@guidemd/linter/skills/schema` | `SkillSchema`, `SkillFrontmatter` |
 
 ---
 

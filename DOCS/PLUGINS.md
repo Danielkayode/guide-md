@@ -2,7 +2,24 @@
 
 This guide walks you through building, testing, and publishing plugins for the GUIDE.md ecosystem.
 
-> **⚠️ Implementation Status**: The plugin system described in this document is planned but **not yet fully implemented** in the current release. The `GuidemdPlugin` interface and plugin loading mechanism are defined in documentation but the plugin runtime is still under development. The examples and API signatures documented here represent the target design.
+> **⚠️ Implementation Status**: The plugin system described in this document is **planned but not yet implemented** in the current release (v0.2.4). The `GuidemdPlugin` interface, hooks, and plugin loading mechanism are defined in documentation only - the plugin runtime, registration system, and loader are still under active development.
+>
+> **Current Status**: This document represents the **target API design** for a future v1.0.0 release. The examples and interfaces documented here are subject to change during implementation.
+>
+> **Available Now**: For extending GUIDE.md functionality today, see the [Skills system](../src/skills/) which provides directory-based capability validation, and the [Registry system](./REGISTRY.md) for reusable module configurations.
+
+---
+
+## Roadmap
+
+| Feature | Status | Target Version |
+|---------|--------|----------------|
+| Plugin Interface Definition | ✅ Documented | v0.2.4 (current) |
+| Skill Validation System | ✅ Implemented | v0.2.4 (current) |
+| Plugin Runtime / Loader | 🚧 Not Started | v0.4.0 |
+| Hook Execution Engine | 🚧 Not Started | v0.4.0 |
+| Plugin Registry | 🚧 Not Started | v0.5.0 |
+| Plugin Publishing | 🚧 Not Started | v1.0.0 |
 
 ---
 

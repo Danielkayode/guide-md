@@ -2,6 +2,10 @@
 
 A "Hello World" example plugin demonstrating how to build plugins for the GUIDE.md ecosystem.
 
+> **⚠️ Note**: This is a **concept/example** for the planned plugin system. The plugin API described here is documented but **not yet implemented** in the current release. See [DOCS/PLUGINS.md](../../DOCS/PLUGINS.md) for the current status and roadmap.
+>
+> **Available Now**: For extending GUIDE.md functionality today, consider using the [Skills system](../../src/skills/) or the [Registry modules](../../DOCS/REGISTRY.md).
+
 ## Features
 
 - **Schema Extension**: Adds custom `security` YAML fields to GUIDE.md

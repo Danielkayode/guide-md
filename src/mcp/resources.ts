@@ -1,4 +1,5 @@
 import { GuideMdFrontmatter } from "../schema/index.js";
+import fs from "node:fs";
 
 // Security: Maximum line length to prevent ReDoS attacks
 const MAX_LINE_LENGTH = 10000;
@@ -12,6 +13,10 @@ export interface McpResource {
   name: string;
   description: string;
   mimeType: string;
+}
+
+export interface SkillResource extends McpResource {
+  skillPath: string;
 }
 
 // Define resources array (will be frozen before export)
@@ -49,7 +54,12 @@ const RESOURCES_DEFINITION: McpResource[] = [
 ];
 
 // Export frozen copy to prevent runtime mutation
-export const RESOURCES: readonly McpResource[] = Object.freeze([...RESOURCES_DEFINITION]);
+export const BASE_RESOURCES: readonly McpResource[] = Object.freeze([...RESOURCES_DEFINITION]);
+
+/**
+ * Backward compatibility alias for BASE_RESOURCES.
+ */
+export const RESOURCES = BASE_RESOURCES;
 
 export interface ResourceContent {
   uri: string;
@@ -57,7 +67,30 @@ export interface ResourceContent {
   text: string;
 }
 
-export function readResource(uri: string, data: GuideMdFrontmatter, fullContent: string): ResourceContent | null {
+/**
+ * Handles reading both base resources and dynamic skill resources.
+ */
+export function readResource(
+  uri: string, 
+  data: GuideMdFrontmatter, 
+  fullContent: string,
+  skills: SkillResource[] = []
+): ResourceContent | null {
+  // Check skills first
+  const skill = skills.find(s => s.uri === uri);
+  if (skill) {
+    try {
+      const content = fs.readFileSync(skill.skillPath, "utf-8");
+      return {
+        uri,
+        mimeType: "text/markdown",
+        text: content
+      };
+    } catch {
+      return null;
+    }
+  }
+
   switch (uri) {
     case "guidemd://frontmatter":
       return {

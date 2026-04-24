@@ -230,6 +230,15 @@ guidemd add react-testing        # React testing configuration
 
 ---
 
-## 📜 License
+## � Additional Resources
+
+- [CHANGELOG.md](./CHANGELOG.md) - Version history and release notes
+- [SECURITY.md](./SECURITY.md) - Security features and best practices
+- [CONTRIBUTING.md](./CONTRIBUTING.md) - Development and contribution guide
+- [TESTING.md](./TESTING.md) - Testing strategy and coverage requirements
+
+---
+
+## �📜 License
 
 MIT © Prism Team

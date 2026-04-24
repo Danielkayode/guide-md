@@ -24,6 +24,7 @@ import path from "node:path";
 import matter from "gray-matter";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { detectParadigm } from "../linter/sync.js";
+import { validateAllSkills, SkillValidationResult } from "../skills/index.js";
 import { fileURLToPath } from "node:url";
 
 // ─── Version ───────────────────────────────────────────────────────────────────
@@ -48,6 +49,7 @@ const ICONS = {
   export: chalk.magenta("📤"),
   optimize: chalk.hex("#FFA500")("⚡"),
   guardian: chalk.green("🛡️"),
+  skill: chalk.hex("#8A2BE2")("🎯"),
   mcp: chalk.cyan("🔌"),
   readme: chalk.magenta("📝"),
   registry: chalk.hex("#8A2BE2")("📦"),
@@ -119,6 +121,48 @@ Fix the errors above before using this GUIDE.md with AI agents.
     );
     process.exit(1);
   }
+}
+
+// ─── Skill Validation Helpers ──────────────────────────────────────────────────
+
+function printSkillDiagnostics(skillResult: import("../skills/index.js").SkillValidationResult): void {
+  const errors = skillResult.diagnostics.filter((d) => d.severity === "error");
+  const warnings = skillResult.diagnostics.filter((d) => d.severity === "warning");
+
+  if (errors.length > 0) {
+    console.log(chalk.red.bold(`    Errors (${errors.length})`));
+    errors.forEach((d) => {
+      console.log(`      ${ICONS.error} ${chalk.bold(d.field)}`);
+      console.log(`        ${chalk.dim("→")} ${d.message}`);
+      if (d.received !== undefined) {
+        console.log(`        ${chalk.dim("received:")} ${chalk.red(JSON.stringify(d.received))}`);
+      }
+    });
+  }
+
+  if (warnings.length > 0) {
+    console.log(chalk.yellow.bold(`    Warnings (${warnings.length})`));
+    warnings.forEach((d) => {
+      console.log(`      ${ICONS.warning} ${chalk.bold(d.field)}`);
+      console.log(`        ${chalk.dim("→")} ${d.message}`);
+    });
+  }
+}
+
+function printSkillSummary(results: import("../skills/index.js").SkillValidationResult[]): void {
+  const total = results.length;
+  const valid = results.filter((r) => r.valid).length;
+  const invalid = total - valid;
+  const totalErrors = results.reduce((sum, r) => sum + r.diagnostics.filter((d) => d.severity === "error").length, 0);
+  const totalWarnings = results.reduce((sum, r) => sum + r.diagnostics.filter((d) => d.severity === "warning").length, 0);
+
+  console.log(chalk.bold("\n  Skills Summary:"));
+  console.log(`    ${chalk.dim("•")} Total skills: ${total}`);
+  console.log(`    ${chalk.dim("•")} Valid: ${chalk.green(valid)}`);
+  console.log(`    ${chalk.dim("•")} Invalid: ${chalk.red(invalid)}`);
+  console.log(`    ${chalk.dim("•")} Total errors: ${chalk.red(totalErrors)}`);
+  console.log(`    ${chalk.dim("•")} Total warnings: ${chalk.yellow(totalWarnings)}`);
+  console.log("");
 }
 
 // ─── INIT template ────────────────────────────────────────────────────────────
@@ -392,6 +436,34 @@ program
         console.log(chalk.bold.cyan("╚════════════════════════════════════════════════╝"));
         console.log(formatDensityReport(densityReport));
         console.log("");
+      }
+
+      // ── Skill Validation ────────────────────────────────────────────────────
+      const projectRoot = path.dirname(target);
+      const skillResults = validateAllSkills(projectRoot);
+
+      if (skillResults.length > 0) {
+        console.log(chalk.bold.hex("#8A2BE2")("\n╔════════════════════════════════════════════════╗"));
+        console.log(chalk.bold.hex("#8A2BE2")("║     🎯  Agent Skills Validation                ║"));
+        console.log(chalk.bold.hex("#8A2BE2")("╚════════════════════════════════════════════════╝"));
+
+        skillResults.forEach((skillResult) => {
+          const skillName = path.basename(skillResult.skillDir);
+          const statusIcon = skillResult.valid ? ICONS.success : ICONS.error;
+          const statusColor = skillResult.valid ? chalk.green : chalk.red;
+          console.log(`\n  ${statusIcon} ${statusColor.bold(skillName)} ${chalk.dim(skillResult.file)}`);
+
+          if (!skillResult.valid || skillResult.diagnostics.length > 0) {
+            printSkillDiagnostics(skillResult);
+          }
+        });
+
+        printSkillSummary(skillResults);
+
+        // If skills have errors, mark the overall result as invalid
+        if (skillResults.some((r) => !r.valid)) {
+          result.valid = false;
+        }
       }
 
       exitSummary(result);
@@ -1467,7 +1539,8 @@ program
     log(`  ${ICONS.info} Resources: ${chalk.cyan("guidemd://frontmatter, guidemd://overview, guidemd://domain, guidemd://decisions, guidemd://antipatterns")}`);
     log(chalk.dim("\n  Listening for requests from Claude Desktop, Cursor, etc.\n"));
 
-    const server = new McpServer(schemaResult.data, parsed.content);
+    const projectRoot = path.dirname(targetFile);
+    const server = new McpServer(schemaResult.data, parsed.content, projectRoot);
     server.start();
   });
 

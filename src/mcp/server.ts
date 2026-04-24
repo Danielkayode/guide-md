@@ -1,7 +1,9 @@
 import { GuideMdFrontmatter } from "../schema/index.js";
 import { TOOLS, callTool, ToolCallResult } from "./tools.js";
-import { RESOURCES, readResource, ResourceContent } from "./resources.js";
+import { BASE_RESOURCES, readResource, ResourceContent, SkillResource } from "./resources.js";
 import { logRateLimit } from "./audit.js";
+import { detectSkills, validateSkill } from "../skills/index.js";
+import path from "node:path";
 
 // ─── Security Configuration ─────────────────────────────────────────────────
 
@@ -224,13 +226,43 @@ interface JsonRpcResponse {
 export class McpServer {
   private data: GuideMdFrontmatter;
   private content: string;
+  private projectRoot: string;
+  private skillResources: SkillResource[] = [];
   // Rate limiting state
   private requestTimestamps: number[] = [];
   private lastRequestTime: number = 0;
 
-  constructor(data: GuideMdFrontmatter, content: string) {
+  constructor(data: GuideMdFrontmatter, content: string, projectRoot: string = process.cwd()) {
     this.data = data;
     this.content = content;
+    this.projectRoot = projectRoot;
+    this.discoverSkills();
+  }
+
+  /**
+   * Discovers and validates skills in the project to expose as MCP resources.
+   */
+  private discoverSkills(): void {
+    try {
+      const skills = detectSkills(this.projectRoot);
+      this.skillResources = skills
+        .map(skill => {
+          const validation = validateSkill(skill.path);
+          if (validation.valid && validation.data) {
+            return {
+              uri: `guidemd://skills/${validation.data.name}`,
+              name: `Skill: ${validation.data.name}`,
+              description: validation.data.description,
+              mimeType: "text/markdown",
+              skillPath: skill.path
+            };
+          }
+          return null;
+        })
+        .filter((s): s is SkillResource => s !== null);
+    } catch (error) {
+      this.skillResources = [];
+    }
   }
 
   /**
@@ -332,7 +364,9 @@ export class McpServer {
     return {
       jsonrpc: "2.0",
       id: request.id,
-      result: { resources: RESOURCES }
+      result: { 
+        resources: [...BASE_RESOURCES, ...this.skillResources] 
+      }
     };
   }
 
@@ -342,7 +376,12 @@ export class McpServer {
       return this.errorResponse(request.id, -32602, "Missing or invalid resource URI");
     }
 
-    const resource = readResource(uri, this.data, this.content);
+    if (process.env.NODE_ENV === "test") {
+      console.error(`Requested URI: ${uri}`);
+      console.error(`Available skill URIs: ${this.skillResources.map(s => s.uri).join(", ")}`);
+    }
+
+    const resource = readResource(uri, this.data, this.content, this.skillResources);
     if (!resource) {
       return this.errorResponse(request.id, -32602, `Resource not found: ${uri}`);
     }
