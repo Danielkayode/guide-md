@@ -23,7 +23,20 @@
 npm install -g @prismteam/linter
 ```
 
-**Requirements:** Node.js 18 or higher
+### Version Compatibility
+
+| GUIDE.md Linter | Node.js | npm | Status |
+|-----------------|---------|-----|--------|
+| 0.2.x           | >= 18.0.0 | >= 9.0.0 | ✅ Current |
+| 0.1.x           | >= 16.0.0 | >= 8.0.0 | ⚠️ Legacy |
+
+**Recommended:** Node.js 20 LTS or higher for best performance
+
+### System Requirements
+
+- **Operating Systems**: macOS, Linux, Windows (WSL recommended)
+- **Memory**: 512MB RAM minimum
+- **Disk**: 50MB free space
 
 ---
 
@@ -131,8 +144,13 @@ guidemd verify
 |----------|-------------|
 | [CLI Reference](DOCS/plugin/docs.md) | Complete command reference with all options |
 | [Feature Architecture](DOCS/FEATURES.md) | How each module works internally |
-| [Plugin SDK](DOCS/PLUGINS.md) | Build custom extensions |
+| [Plugin SDK](DOCS/PLUGINS.md) | Build custom extensions (🚧 In Development) |
 | [GUIDE.md Spec](GUIDE.md) | Example GUIDE.md for this project |
+| [Contributing](CONTRIBUTING.md) | How to contribute to the project |
+| [Testing Guide](TESTING.md) | Testing strategy and best practices |
+| [Troubleshooting](TROUBLESHOOTING.md) | Common issues and solutions |
+
+**Plugin System Status**: The plugin system is currently in development. Core functionality is available, but the full SDK and registry are planned for v0.3.0. Track progress in [DOCS/PLUGINS.md](DOCS/PLUGINS.md).
 
 ---
 

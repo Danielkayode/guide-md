@@ -4,28 +4,53 @@ import fs from "node:fs";
 import path from "node:path";
 import { analyzeTokenBudgets, renderBudgetBar, generateBudgetWarnings, BudgetReport, TokenBudgetStatus } from "./budgets.js";
 
+/**
+ * Status of a documentation section in the GUIDE.md.
+ */
 export interface SectionStatus {
+  /** Section name (e.g., "Project Overview") */
   name: string;
+  /** Whether the section is present and populated */
   present: boolean;
+  /** Word count in the section */
   wordCount: number;
-  constraintDensity: number; // 0 to 1
+  /** Density of negative constraints (0-1 scale) */
+  constraintDensity: number;
 }
 
+/**
+ * Comprehensive health report for a GUIDE.md file.
+ * Used by the dashboard to display AI-readiness metrics.
+ */
 export interface HealthReport {
+  /** Overall score 0-100 */
   score: number;
+  /** Token density rating and word count */
   tokenDensity: string;
+  /** Token efficiency score 0-100 */
   tokenScore: number;
+  /** Sync status description with days since update */
   syncStatus: string;
+  /** Sync freshness score 0-100 */
   syncScore: number;
+  /** Status of required sections */
   sectionCompleteness: SectionStatus[];
+  /** Section completeness score 0-100 */
   sectionScore: number;
+  /** Guardrails/best practices coverage */
   bestPractices: {
+    /** Total number of best practice items */
     total: number;
+    /** Number of enabled best practices */
     enabled: number;
+    /** Coverage percentage 0-100 */
     coverage: number;
   };
+  /** Compatibility ratings for different AI models */
   modelCompatibility: { model: string; rating: string }[];
+  /** List of improvement suggestions */
   suggestions: string[];
+  /** Optional token budget analysis report */
   tokenBudgets?: BudgetReport | undefined;
 }
 

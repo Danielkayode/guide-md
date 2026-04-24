@@ -5,9 +5,15 @@ import { DEFAULT_TEMPLATE, generateBadges, generateGuardrailsSummary, generateSm
 export { generateSmartTemplate };
 import fs from "node:fs";
 
+/**
+ * Result of README generation operation.
+ */
 export interface GenerateResult {
+  /** Whether generation succeeded */
   success: boolean;
+  /** Generated README content (empty if failed) */
   content: string;
+  /** Error message if generation failed */
   error?: string;
 }
 
@@ -15,6 +21,22 @@ export interface GenerateResult {
  * Generates a README.md string from a parsed GUIDE.md.
  * Uses the built-in template by default, or a custom template file if provided.
  * Optionally injects an AI-Readiness badge based on the doctor grade.
+ * 
+ * @param data - Parsed GUIDE.md frontmatter data
+ * @param content - Full GUIDE.md markdown content (body after frontmatter)
+ * @param customTemplatePath - Optional path to custom template file
+ * @param badgeGrade - Optional AI-readiness grade for badge injection (A-F)
+ * @returns GenerateResult with success status and content or error
+ * 
+ * @example
+ * ```typescript
+ * const result = generateReadme(frontmatter, markdownContent);
+ * if (result.success) {
+ *   fs.writeFileSync('README.md', result.content);
+ * }
+ * ```
+ * 
+ * @security Template rendering sanitizes all user input to prevent XSS
  */
 export function generateReadme(
   data: GuideMdFrontmatter,

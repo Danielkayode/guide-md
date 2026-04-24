@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- CONTRIBUTING.md - Comprehensive contribution guidelines
+- TESTING.md - Complete testing guide with examples
+- TROUBLESHOOTING.md - Common issues and solutions
+- Documentation for plugin system roadmap
+- Version compatibility matrix in README
+
+### Changed
+- Improved CHANGELOG.md format consistency
+- Enhanced JSDoc coverage in generator and dashboard modules
+
+### Fixed
+- Documentation gaps in error handling
+- Missing security considerations in architecture docs
+
+## [0.2.4] - 2026-04-24
+
+### Added
+- Documentation improvements based on audit recommendations
+
 ## [0.2.3] - 2026-04-22
 
 ### Added

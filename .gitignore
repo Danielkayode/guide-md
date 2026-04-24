@@ -1,17 +1,40 @@
+```
 # Dependencies
 node_modules/
-*.log
-npm-debug.log*
-
-# Build output
-dist/
-build/
-*.tsbuildinfo
 
 # Environment
 .env
 .env.local
-.env.*.local
+.env.*
+
+# Logs
+*.log
+
+# Coverage
+coverage/
+htmlcov/
+.coverage
+
+# Build artifacts
+dist/
+build/
+target/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.eggs/
+egg-info/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
 
 # IDE
 .vscode/
@@ -24,9 +47,12 @@ build/
 Thumbs.db
 
 # Testing
+.mypy_cache/
+.pytest_cache/
+.nyc_output/
 coverage/
-*.lcov
 
-# Cache
-.cache/
+# Temporary files
 *.tmp
+*.temp
+```
