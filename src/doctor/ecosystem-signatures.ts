@@ -5,7 +5,7 @@ export interface EcosystemDetectionResult {
   language: string | null;
   framework: string | null;
   runtime: string | null;
-  paradigm: string | null;
+  paradigm: "oop" | "functional" | "mixed" | "imperative" | "procedural" | null;
 }
 
 interface MarkerFile {

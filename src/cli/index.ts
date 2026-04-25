@@ -1,6 +1,6 @@
 import { program } from "commander";
 import chalk from "chalk";
-import { lintGuideFile, fixGuideFile, LintResult, syncGuideFile, detectDrift, detectLanguage } from "../linter/index.js";
+import { lintGuideFile, fixGuideFile, LintResult, syncGuideFile, detectDrift, detectLanguage, readDependencies, detectParadigm as detectUniversalParadigm } from "../linter/index.js";
 import { GuideMdSchema, GuideMdFrontmatter } from "../schema/index.js";
 import { parseGuideFile } from "../parser/index.js";
 import { exportGuide, generateBadge, ExportTarget, exportMcpManifest } from "../exporter/index.js";
@@ -12,10 +12,9 @@ import { installHook, uninstallHook, detectHookManager, HookManager } from "../g
 import { resolveInheritance, ResolutionError, ResolveResult, CircularDependencyError } from "../parser/resolver.js";
 import { generateReadme, backSyncFromReadme, generateSmartTemplate } from "../generator/index.js";
 import { listModules, searchModules, getModuleInfo, addModule, fetchModule } from "../registry/index.js";
-import { runDoctor } from "../doctor/index.js";
+import { runDoctor, detectEcosystem, detectFramework } from "../doctor/index.js";
 import { runColdStartVerification } from "../verify/index.js";
 import { calculateContextDensity, formatDensityReport } from "../stats/index.js";
-import { detectFramework } from "../doctor/index.js";
 import { runProfile, generateJsonSchema } from "../profiler/index.js";
 import { watchGuideFile } from "../watcher/index.js";
 import { diffGuides, diffGit, formatDiff, formatDiffJson, DiffOptions } from "../diff/index.js";
@@ -23,7 +22,6 @@ import fs from "node:fs";
 import path from "node:path";
 import matter from "gray-matter";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { detectParadigm } from "../linter/sync.js";
 import { validateAllSkills, SkillValidationResult } from "../skills/index.js";
 import { fileURLToPath } from "node:url";
 
@@ -894,48 +892,155 @@ program
     console.log(`  ${ICONS.info} Running pre-flight scan to detect project configuration...\n`);
     
     const projectRoot = process.cwd();
-    const detectedLang = detectLanguage(dest);
-    const detectedFramework = detectFramework(projectRoot);
-    const detectedParadigm = await detectParadigm(projectRoot);
     
-    // Get project name from package.json or directory
-    let projectName = path.basename(projectRoot);
-    try {
-      const pkgPath = path.join(projectRoot, "package.json");
-      if (fs.existsSync(pkgPath)) {
-        const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-        if (pkg.name) projectName = pkg.name.replace(/^@[^/]+\//, "");
+    // Universal ecosystem detection
+    const ecosystem = detectEcosystem(projectRoot);
+    
+    // Fallback to file-based detection if ecosystem detection didn't find language
+    let detectedLang = ecosystem.language;
+    if (!detectedLang) {
+      detectedLang = detectLanguage(dest);
+    }
+    
+    // Framework detection: ecosystem first, then npm-based
+    let detectedFramework = ecosystem.framework;
+    if (!detectedFramework) {
+      const npmFramework = detectFramework(projectRoot);
+      if (npmFramework) detectedFramework = npmFramework;
+    }
+    
+    // Paradigm detection: ecosystem pre-detected first, then universal, then TS-based
+    let detectedParadigm: "oop" | "functional" | "mixed" | "imperative" | "procedural" | null = ecosystem.paradigm;
+    if (!detectedParadigm && detectedLang) {
+      detectedParadigm = detectUniversalParadigm(projectRoot, detectedLang);
+    }
+    if (!detectedParadigm) {
+      // Fallback for JS/TS projects
+      const { detectDrift } = await import("../linter/sync.js");
+      // Use sync.ts paradigm detection via temp GUIDE.md
+      const tempGuidePath = path.join(projectRoot, "GUIDE.md");
+      if (fs.existsSync(tempGuidePath)) {
+        const tempData = { language: detectedLang };
+        const tempDrifts = await detectDrift(tempData, tempGuidePath);
+        const paradigmDrift = tempDrifts.find(d => d.field === "paradigm");
+        if (paradigmDrift) {
+          detectedParadigm = paradigmDrift.actual as "oop" | "functional" | null;
+        }
       }
-    } catch (err) {
-      // Non-fatal: fallback to directory name if package.json can't be read
-      if (!opts.json) {
-        console.log(chalk.yellow(`  ${ICONS.warning} Could not read package.json: ${err instanceof Error ? err.message : String(err)}`));
+    }
+    
+    // Runtime detection from ecosystem
+    const detectedRuntime = ecosystem.runtime;
+    
+    // Read top dependencies
+    const allDeps = readDependencies(projectRoot);
+    const topDeps = allDeps.slice(0, 10).map(d => `${d.name}@${d.version.replace(/[\^~>=<]/, "").split(",").pop() || "*"}`);
+    
+    // Get project name from manifest or directory
+    let projectName = path.basename(projectRoot);
+    const manifestPriority = ["package.json", "Cargo.toml", "pyproject.toml", "go.mod", "composer.json", "Gemfile"];
+    for (const manifest of manifestPriority) {
+      const manifestPath = path.join(projectRoot, manifest);
+      if (fs.existsSync(manifestPath)) {
+        try {
+          const content = fs.readFileSync(manifestPath, "utf-8");
+          if (manifest === "package.json") {
+            const parsed = JSON.parse(content);
+            if (parsed.name) {
+              projectName = parsed.name.replace(/^@[^/]+\//, "");
+              break;
+            }
+          } else if (manifest === "Cargo.toml") {
+            const nameMatch = content.match(/name\s*=\s*"([^"]+)"/);
+            if (nameMatch?.[1]) {
+              projectName = nameMatch[1];
+              break;
+            }
+          } else if (manifest === "pyproject.toml") {
+            const nameMatch = content.match(/name\s*=\s*"([^"]+)"/);
+            if (nameMatch?.[1]) {
+              projectName = nameMatch[1];
+              break;
+            }
+          } else if (manifest === "go.mod") {
+            const moduleMatch = content.match(/module\s+(\S+)/);
+            if (moduleMatch?.[1]) {
+              projectName = moduleMatch[1].split("/").pop() || projectName;
+              break;
+            }
+          }
+        } catch {
+          // Continue to next manifest
+        }
       }
     }
     
     // Generate smart template with detected values
     const smartTemplate = generateSmartTemplate({
       project: projectName,
-      language: detectedLang,
-      framework: detectedFramework,
-      paradigm: detectedParadigm,
+      language: detectedLang, // null if not detected - template will show TODO
+      framework: detectedFramework ?? null,
+      paradigm: detectedParadigm ?? null,
     });
     
     const today = new Date().toISOString().split("T")[0] ?? "unknown";
-    const finalTemplate = smartTemplate.replace(/\{\{CURRENT_DATE\}\}/g, today);
+    let finalTemplate = smartTemplate.replace(/\{\{CURRENT_DATE\}\}/g, today);
+    
+    // Inject detected dependencies into context if available
+    if (topDeps.length > 0 && finalTemplate.includes("context:")) {
+      const depsComment = `  # Auto-detected dependencies (top ${topDeps.length}): ${topDeps.join(", ")}`;
+      finalTemplate = finalTemplate.replace(
+        /(context:)/,
+        `${depsComment}\n  $1`
+      );
+    }
+    
     fs.writeFileSync(dest, finalTemplate, "utf-8");
     
     console.log(`  ${ICONS.success} ${chalk.green("Created GUIDE.md")}`);
     
-    // Display detection results
-    console.log(chalk.dim(`\n  Detected configuration:`));
-    console.log(`    ${chalk.cyan("•")} Project: ${projectName}`);
-    console.log(`    ${chalk.cyan("•")} Language: ${detectedLang}`);
-    if (detectedFramework) {
-      console.log(`    ${chalk.cyan("•")} Framework: ${detectedFramework}`);
+    // Display detection summary
+    console.log(chalk.bold.cyan("\n  Detection Summary:\n"));
+    
+    const detected: string[] = [];
+    const needsManual: string[] = [];
+    
+    if (detectedLang) {
+      detected.push(`language=${detectedLang}`);
+    } else {
+      needsManual.push("language");
     }
+    
+    if (detectedFramework) {
+      detected.push(`framework=${detectedFramework}`);
+    } else {
+      needsManual.push("framework");
+    }
+    
     if (detectedParadigm) {
-      console.log(`    ${chalk.cyan("•")} Paradigm: ${detectedParadigm}`);
+      detected.push(`paradigm=${detectedParadigm}`);
+    } else {
+      needsManual.push("paradigm");
+    }
+    
+    if (detectedRuntime) {
+      detected.push(`runtime=${detectedRuntime}`);
+    } else {
+      needsManual.push("runtime");
+    }
+    
+    // Print detected
+    if (detected.length > 0) {
+      console.log(`  ${chalk.green("✓ Detected:")} ${detected.join(", ")}`);
+    }
+    
+    // Print needs manual
+    if (needsManual.length > 0) {
+      console.log(`  ${chalk.yellow("? Could not detect:")} ${needsManual.join(", ")} (please fill in manually)`);
+    }
+    
+    if (topDeps.length > 0) {
+      console.log(`  ${chalk.dim("•")} Found ${topDeps.length} dependencies in manifest`);
     }
     
     console.log(

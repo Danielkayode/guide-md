@@ -3,6 +3,9 @@ import path from "node:path";
 import ts from "typescript";
 import { GuideMdFrontmatter } from "../schema/index.js";
 import { init } from "es-module-lexer";
+import { readDependencies } from "./deps.js";
+import { detectEcosystem } from "../doctor/ecosystem-signatures.js";
+import { detectParadigm as detectUniversalParadigm } from "./paradigm.js";
 
 // Performance tuning constants for paradigm detection
 // These balance accuracy vs. analysis time for large codebases
@@ -55,28 +58,73 @@ export async function detectDrift(data: Record<string, unknown>, filePath: strin
   const drifts: Drift[] = [];
   const projectRoot = path.dirname(filePath);
 
-  // 1. Version Check (Frameworks)
-  const pkgPath = findPackageJson(filePath);
-  if (pkgPath) {
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+  // 1. Version Check (Frameworks) - Universal via readDependencies
+  const deps = readDependencies(projectRoot);
+  const depMap = new Map(deps.map(d => [d.name, d.version]));
 
-    const frameworks = getFrameworks(data);
+  const frameworks = getFrameworks(data);
 
-    frameworks.forEach((fw) => {
-      const [name, version] = fw.split("@");
-      if (name && deps[name]) {
-        const actualVersion = deps[name].replace(/[\^~]/, "");
-        if (version && actualVersion !== version) {
+  frameworks.forEach((fw) => {
+    const [name, version] = fw.split("@");
+    if (name) {
+      // Check for exact match or partial match for scoped/namespaced packages
+      let actualVersion: string | undefined;
+      
+      // Try exact match first
+      if (depMap.has(name)) {
+        actualVersion = depMap.get(name);
+      } else {
+        // Try to find by suffix (e.g., package name without scope/namespace)
+        for (const [depName, depVersion] of depMap) {
+          if (depName === name || depName.endsWith(`/${name}`) || depName.endsWith(`:${name}`)) {
+            actualVersion = depVersion;
+            break;
+          }
+        }
+      }
+      
+      if (actualVersion) {
+        const cleanActualVersion = actualVersion.replace(/[\^~>=<]/, "");
+        if (version && cleanActualVersion !== version) {
           drifts.push({
             field: "framework",
-            actual: `${name}@${actualVersion}`,
+            actual: `${name}@${cleanActualVersion}`,
             expected: fw,
-            message: `Framework version drift: ${name} is ${actualVersion} in package.json but ${version} in GUIDE.md`,
+            message: `Framework version drift: ${name} is ${cleanActualVersion} in manifest but ${version} in GUIDE.md`,
           });
         }
       }
-    });
+    }
+  });
+
+  // 1b. Framework existence check - warn if framework declared but not in deps
+  const declaredLanguage = typeof data.language === "string" ? data.language : null;
+  const detectedEcosystem = detectEcosystem(projectRoot);
+  
+  if (frameworks.length > 0 && deps.length > 0) {
+    for (const fw of frameworks) {
+      const [name] = fw.split("@");
+      if (!name) continue;
+      
+      // Check if framework is found in dependencies
+      let found = false;
+      for (const [depName] of depMap) {
+        if (depName.toLowerCase().includes(name.toLowerCase()) || 
+            name.toLowerCase().includes(depName.toLowerCase().split(/[/:]/).pop() || "")) {
+          found = true;
+          break;
+        }
+      }
+      
+      if (!found) {
+        drifts.push({
+          field: "framework",
+          actual: "not in dependencies",
+          expected: name,
+          message: `Framework '${name}' declared in GUIDE.md but not found in project dependencies.`,
+        });
+      }
+    }
   }
 
   // 2. Dependency Check (Strict Typing -> tsconfig.json)
@@ -125,8 +173,64 @@ export async function detectDrift(data: Record<string, unknown>, filePath: strin
     });
   } catch (e) {}
 
-  // 4. Paradigm Detection (Async AST-based)
-  const detectedParadigm = await detectParadigm(projectRoot);
+  // 4. Language file existence check
+  if (declaredLanguage) {
+    const langToExt: Record<string, string> = {
+      python: ".py",
+      rust: ".rs",
+      go: ".go",
+      java: ".java",
+      kotlin: ".kt",
+      swift: ".swift",
+      dart: ".dart",
+      elixir: ".ex",
+      ruby: ".rb",
+      php: ".php",
+      c: ".c",
+      cpp: ".cpp",
+      typescript: ".ts",
+      javascript: ".js",
+    };
+    
+    const ext = langToExt[declaredLanguage.toLowerCase()];
+    if (ext) {
+      const hasFiles = checkFilesWithExt(projectRoot, ext);
+      if (!hasFiles) {
+        drifts.push({
+          field: "language",
+          actual: `no ${ext} files found`,
+          expected: declaredLanguage,
+          message: `Language '${declaredLanguage}' declared but no ${ext} files found in project.`,
+        });
+      }
+    }
+  }
+
+  // 5. Ecosystem detection comparison
+  if (detectedEcosystem.language && declaredLanguage && 
+      detectedEcosystem.language.toLowerCase() !== declaredLanguage.toLowerCase()) {
+    drifts.push({
+      field: "language",
+      actual: detectedEcosystem.language,
+      expected: declaredLanguage,
+      message: `Detected language is '${detectedEcosystem.language}' but GUIDE.md declares '${declaredLanguage}'.`,
+    });
+  }
+
+  // 6. Paradigm Detection (Universal)
+  let detectedParadigm: string | null = null;
+  
+  if (detectedEcosystem.paradigm) {
+    // Use pre-detected paradigm from ecosystem (e.g., Go is always procedural)
+    detectedParadigm = detectedEcosystem.paradigm;
+  } else if (declaredLanguage) {
+    // Use universal text-based detection
+    detectedParadigm = detectUniversalParadigm(projectRoot, declaredLanguage);
+  } else {
+    // Fallback to TypeScript-based detection for JS/TS projects
+    detectedParadigm = await detectTsParadigm(projectRoot);
+  }
+  
   const currentParadigm = typeof data.paradigm === "string" ? data.paradigm : undefined;
   // Only report drift if paradigm is explicitly set and differs from detected
   if (detectedParadigm && currentParadigm && detectedParadigm !== currentParadigm) {
@@ -362,10 +466,27 @@ function analyzeFileWithAst(filePath: string): Partial<ParadigmScore> {
 }
 
 /**
+ * Checks if any files with the given extension exist in the project.
+ */
+function checkFilesWithExt(projectRoot: string, ext: string): boolean {
+  try {
+    const entries = fs.readdirSync(projectRoot, { withFileTypes: true, recursive: true });
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name.endsWith(ext)) {
+        return true;
+      }
+    }
+  } catch {
+    // Ignore errors
+  }
+  return false;
+}
+
+/**
  * Detects paradigm using AST-based analysis with TypeScript compiler API.
  * Uses weighted sampling instead of random 50-file limit.
  */
-export async function detectParadigm(projectRoot: string): Promise<"oop" | "functional" | null> {
+async function detectTsParadigm(projectRoot: string): Promise<"oop" | "functional" | null> {
   try {
     const allFiles: string[] = [];
     const files = readdirRecursive(projectRoot, PARADIGM_READDIR_MAX_DEPTH, PARADIGM_IGNORED_DIRS);

@@ -144,41 +144,51 @@ export function generateBadges(data: Record<string, unknown>): string {
   }
 
   // AI-Validated badge
-  badges.push(`![AI-Validated](https://img.shields.io/badge/AI--Validated-GUIDE.md-ff69b4?style=flat-square&logo=ai)`);
+  badges.push(`![AI-Validated](https://img.shields.io/badge/AI--Validated-GUIDE.md-ff69b4?style=flat-square)`);
 
   return badges.join(" ");
 }
 
 interface SmartTemplateOptions {
   project: string;
-  language: string;
+  language: string | null;
   framework: string | null;
-  paradigm: "oop" | "functional" | null;
+  paradigm: "oop" | "functional" | "mixed" | "imperative" | "procedural" | null;
 }
 
 /**
  * Generates a smart GUIDE.md template pre-filled with detected project values.
  */
 export function generateSmartTemplate(opts: SmartTemplateOptions): string {
-  const lang = opts.language || "typescript";
+  const lang = opts.language;
   const framework = opts.framework || "";
   const paradigm = opts.paradigm || "";
+
+  // Infer sensible defaults per language
+  const isTyped = ["typescript", "rust", "go", "java", "kotlin", "swift", "dart"].includes(lang ?? "");
+  const defaultTestFramework = inferTestFramework(lang);
+  const defaultRuntime = inferRuntime(lang);
+  const defaultNaming = inferNamingConvention(lang);
+  const defaultIndentation = inferIndentation(lang);
 
   return `---
 guide_version: "1.0.0"
 project: "${opts.project}"
 description: "Describe what this project does in 1-2 sentences for your AI agent."
-language: ${lang}
-${framework ? `framework: "${framework}"\n` : ""}runtime: "node@22"
-strict_typing: ${lang === "typescript" ? "true" : "false"}
+language: ${lang ? lang : "# TODO: fill this in (e.g., typescript, python, go)"}
+${framework ? `framework: "${framework}"\n` : ""}${defaultRuntime ? `runtime: "${defaultRuntime}"\n` : ""}
+strict_typing: ${isTyped ? "true" : "false"}
 error_protocol: verbose
-ai_model_target:
-- "claude-sonnet-4-20250514"
+ai_capabilities:
+  - tool_use
+  - long_context
+  - structured_output
+  - code_execution
 last_updated: "${new Date().toISOString().split("T")[0]}"
 code_style:
   max_line_length: 100
-  indentation: "2 spaces"
-  naming_convention: camelCase
+  indentation: "${defaultIndentation}"
+  naming_convention: ${defaultNaming}
   max_function_lines: 50
   prefer_immutability: true
   prefer_early_returns: true
@@ -190,12 +200,12 @@ guardrails:
   max_response_scope: function
 testing:
   required: true
-  framework: "vitest"
+  framework: "${defaultTestFramework}"
   coverage_threshold: 80
   test_alongside_code: true
 context:
   entry_points:
-  - "src/index.ts"
+  - ${inferEntryPoint(lang)}
   off_limits:
   - ".env"
   - ".env.*"
@@ -203,15 +213,121 @@ context:
   architecture_pattern: ${paradigm === "oop" ? "layered" : paradigm === "functional" ? "clean" : "layered"}
 ---
 # AI Instructions
+
 ## Project Overview
 <!-- Describe the project purpose, domain context, and any business rules the AI must know -->
+
 ## Domain Vocabulary
 <!-- Define key terms so the AI uses consistent naming -->
+
 ## Non-Obvious Decisions
 <!-- Explain any architectural choices that might seem unusual -->
+
 ## What NOT to do
 <!-- Anti-patterns specific to this codebase -->
 `;
+}
+
+/**
+ * Infers the default test framework based on detected language.
+ */
+function inferTestFramework(lang: string | null): string {
+  const map: Record<string, string> = {
+    typescript: "vitest",
+    javascript: "vitest",
+    python: "pytest",
+    rust: "cargo test",
+    go: "go test",
+    java: "junit",
+    kotlin: "junit",
+    ruby: "rspec",
+    php: "phpunit",
+    swift: "xctest",
+    dart: "flutter test",
+    elixir: "exunit",
+  };
+  return map[lang ?? ""] ?? "# TODO: fill this in";
+}
+
+/**
+ * Infers the default runtime based on detected language.
+ */
+function inferRuntime(lang: string | null): string | null {
+  const map: Record<string, string> = {
+    typescript: "node@22",
+    javascript: "node@22",
+    python: "python@3.12",
+    rust: "rustc@stable",
+    go: "go@1.22",
+    java: "jdk@21",
+    kotlin: "jdk@21",
+    ruby: "ruby@3.3",
+    php: "php@8.3",
+    swift: "swift@5.10",
+    dart: "dart@3.4",
+    elixir: "elixir@1.16",
+  };
+  return map[lang ?? ""] ?? null;
+}
+
+/**
+ * Infers the default naming convention based on detected language.
+ */
+function inferNamingConvention(lang: string | null): string {
+  const map: Record<string, string> = {
+    typescript: "camelCase",
+    javascript: "camelCase",
+    python: "snake_case",
+    rust: "snake_case",
+    go: "camelCase",
+    java: "camelCase",
+    kotlin: "camelCase",
+    ruby: "snake_case",
+    php: "camelCase",
+    swift: "camelCase",
+    dart: "camelCase",
+    elixir: "snake_case",
+  };
+  return map[lang ?? ""] ?? "camelCase";
+}
+
+/**
+ * Infers the default indentation based on detected language.
+ */
+function inferIndentation(lang: string | null): string {
+  const map: Record<string, string> = {
+    python: "4 spaces",
+    rust: "4 spaces",
+    go: "tab",
+    java: "4 spaces",
+    kotlin: "4 spaces",
+    ruby: "2 spaces",
+    php: "4 spaces",
+    swift: "4 spaces",
+    elixir: "2 spaces",
+  };
+  return map[lang ?? ""] ?? "2 spaces";
+}
+
+/**
+ * Infers the default entry point based on detected language.
+ */
+function inferEntryPoint(lang: string | null): string {
+  const map: Record<string, string> = {
+    typescript: '"src/index.ts"',
+    javascript: '"src/index.js"',
+    python: '"src/main.py"',
+    rust: '"src/main.rs"',
+    go: '"main.go"',
+    java: '"src/main/java/Main.java"',
+    kotlin: '"src/main/kotlin/Main.kt"',
+    ruby: '"lib/main.rb"',
+    php: '"src/index.php"',
+    swift: '"Sources/main.swift"',
+    dart: '"lib/main.dart"',
+    elixir: '"lib/app.ex"',
+  };
+  return map[lang ?? ""] ?? '"# TODO: fill this in"';
 }
 
 /**
@@ -223,10 +339,10 @@ export function generateAiReadinessBadge(grade: string): string {
     "B": "green",
     "C": "yellow",
     "D": "orange",
-    "F": "red"
+    "F": "red",
   };
   const color = colors[grade] || "blue";
-  return `[![AI-Ready](https://img.shields.io/badge/AI--Ready-Grade_${grade}-${color}?style=for-the-badge&logo=ai)](https://guidemd.dev)`;
+  return `[![AI-Ready](https://img.shields.io/badge/AI--Ready-Grade_${grade}-${color}?style=for-the-badge)](https://guidemd.dev)`;
 }
 
 /**

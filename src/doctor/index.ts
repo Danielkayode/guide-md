@@ -397,3 +397,5 @@ export function detectFramework(projectRoot: string = process.cwd()): string | n
   
   return null;
 }
+
+export { detectEcosystem } from "./ecosystem-signatures.js";

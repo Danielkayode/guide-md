@@ -1,6 +1,6 @@
 {
   "name": "@prismteam/linter",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "The official linter for GUIDE.md — the AI Context Interface standard",
   "type": "module",
   "main": "./dist/cli/index.js",

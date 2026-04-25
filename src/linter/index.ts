@@ -1,9 +1,13 @@
 import { GuideMdSchema, GuideMdFrontmatter } from "../schema/index.js";
 import { parseGuideFile } from "../parser/index.js";
-import { detectDrift, syncGuideFile, Drift, SyncResult } from "./sync.js";
+import { detectDrift, Drift, syncGuideFile, SyncResult } from "./sync.js";
 import { scanForSecrets, violationsToDiagnostics, SecretScanResult } from "./secrets.js";
+import { readDependencies } from "./deps.js";
+import { detectParadigm } from "./paradigm.js";
 import fs from "node:fs";
 import path from "node:path";
+
+export { readDependencies, detectParadigm };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -379,7 +383,7 @@ function readdirRecursive(dir: string, maxDepth: number, ignoreSet: Set<string>,
   return results;
 }
 
-export function detectLanguage(filePath: string): string {
+export function detectLanguage(filePath: string): string | null {
   const dir = path.dirname(filePath);
 
   try {
@@ -416,7 +420,7 @@ export function detectLanguage(filePath: string): string {
     };
 
     let maxCount = 0;
-    let detectedLang = "typescript"; // default
+    let detectedLang: string | null = null;
 
     for (const [ext, count] of Object.entries(extensions)) {
       if (count > maxCount && extToLang[ext]) {
@@ -427,6 +431,6 @@ export function detectLanguage(filePath: string): string {
 
     return detectedLang;
   } catch {
-    return "typescript"; // fallback
+    return null;
   }
 }

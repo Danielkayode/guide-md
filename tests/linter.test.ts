@@ -393,7 +393,7 @@ error_protocol: verbose
       expect(detected).toBe("python");
     });
 
-    it("should default to typescript when no files found", () => {
+    it("should return null when no files found", () => {
       const projectDir = path.join(tempDir, "empty-project");
       fs.mkdirSync(projectDir, { recursive: true });
       
@@ -401,7 +401,7 @@ error_protocol: verbose
       fs.writeFileSync(guidePath, "---\n---\n");
       
       const detected = detectLanguage(guidePath);
-      expect(detected).toBe("typescript");
+      expect(detected).toBeNull();
     });
 
     it("should handle deeply nested directories without hanging", () => {
@@ -421,8 +421,8 @@ error_protocol: verbose
       
       // Should not hang and should respect depth limit
       const detected = detectLanguage(guidePath);
-      // With max depth 10, deep.py at depth 15 won't be found, so defaults to typescript
-      expect(detected).toBe("typescript");
+      // With max depth 10, deep.py at depth 15 won't be found, so returns null
+      expect(detected).toBeNull();
     });
 
     it("should ignore node_modules in language detection", () => {

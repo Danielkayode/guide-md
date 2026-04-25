@@ -296,4 +296,151 @@ describe("sync", () => {
       expect(result.drifts.length).toBe(0);
     });
   });
+
+  describe("Universal Ecosystem Detection", () => {
+    it("should detect Python project with requirements.txt", async () => {
+      // Create Python project structure
+      const requirementsTxt = `fastapi==0.104.1
+uvicorn>=0.24.0
+pydantic~=2.5.0
+`;
+      fs.writeFileSync(path.join(tempDir, "requirements.txt"), requirementsTxt);
+      fs.writeFileSync(path.join(tempDir, "main.py"), "from fastapi import FastAPI\n");
+
+      const guidePath = path.join(tempDir, "GUIDE.md");
+      fs.writeFileSync(guidePath, "---\n---\n");
+
+      // Import and test ecosystem detection
+      const { detectEcosystem } = await import("../src/doctor/ecosystem-signatures.js");
+      const ecosystem = detectEcosystem(tempDir);
+
+      expect(ecosystem.language).toBe("python");
+      expect(ecosystem.framework).toBe("fastapi");
+    });
+
+    it("should detect Python project with pyproject.toml", async () => {
+      const pyprojectToml = `[tool.poetry.dependencies]
+python = "^3.11"
+django = "^4.2"
+djangorestframework = "^3.14"
+`;
+      fs.writeFileSync(path.join(tempDir, "pyproject.toml"), pyprojectToml);
+
+      const guidePath = path.join(tempDir, "GUIDE.md");
+      fs.writeFileSync(guidePath, "---\n---\n");
+
+      const { detectEcosystem } = await import("../src/doctor/ecosystem-signatures.js");
+      const ecosystem = detectEcosystem(tempDir);
+
+      expect(ecosystem.language).toBe("python");
+      expect(ecosystem.framework).toBe("django");
+    });
+
+    it("should detect Go project with go.mod", async () => {
+      const goMod = `module example.com/myapp
+
+go 1.21
+
+require (
+	github.com/gin-gonic/gin v1.9.1
+	github.com/stretchr/testify v1.8.4
+)
+`;
+      fs.writeFileSync(path.join(tempDir, "go.mod"), goMod);
+      fs.writeFileSync(path.join(tempDir, "main.go"), "package main\n\nimport \"github.com/gin-gonic/gin\"\n");
+
+      const guidePath = path.join(tempDir, "GUIDE.md");
+      fs.writeFileSync(guidePath, "---\n---\n");
+
+      const { detectEcosystem } = await import("../src/doctor/ecosystem-signatures.js");
+      const ecosystem = detectEcosystem(tempDir);
+
+      expect(ecosystem.language).toBe("go");
+      expect(ecosystem.framework).toBe("gin");
+      expect(ecosystem.paradigm).toBe("procedural");
+    });
+
+    it("should detect Rust project with Cargo.toml", async () => {
+      const cargoToml = `[package]
+name = "myapp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.34", features = ["full"] }
+axum = "0.7"
+serde = { version = "1.0", features = ["derive"] }
+`;
+      fs.writeFileSync(path.join(tempDir, "Cargo.toml"), cargoToml);
+
+      const guidePath = path.join(tempDir, "GUIDE.md");
+      fs.writeFileSync(guidePath, "---\n---\n");
+
+      const { detectEcosystem } = await import("../src/doctor/ecosystem-signatures.js");
+      const ecosystem = detectEcosystem(tempDir);
+
+      expect(ecosystem.language).toBe("rust");
+      expect(ecosystem.framework).toBe("axum");
+      expect(ecosystem.runtime).toBe("async");
+    });
+
+    it("should detect PHP project with composer.json", async () => {
+      const composerJson = {
+        name: "myapp/myapp",
+        require: {
+          "laravel/framework": "^10.0",
+          "php": "^8.2"
+        }
+      };
+      fs.writeFileSync(path.join(tempDir, "composer.json"), JSON.stringify(composerJson, null, 2));
+
+      const guidePath = path.join(tempDir, "GUIDE.md");
+      fs.writeFileSync(guidePath, "---\n---\n");
+
+      const { detectEcosystem } = await import("../src/doctor/ecosystem-signatures.js");
+      const ecosystem = detectEcosystem(tempDir);
+
+      expect(ecosystem.language).toBe("php");
+      expect(ecosystem.framework).toBe("laravel");
+    });
+  });
+
+  describe("Universal Dependency Reading", () => {
+    it("should read Python dependencies from requirements.txt", async () => {
+      const requirementsTxt = `fastapi==0.104.1
+uvicorn>=0.24.0
+pydantic~=2.5.0
+requests
+`;
+      fs.writeFileSync(path.join(tempDir, "requirements.txt"), requirementsTxt);
+
+      const { readDependencies } = await import("../src/linter/deps.js");
+      const deps = readDependencies(tempDir);
+
+      expect(deps.length).toBeGreaterThan(0);
+      const fastapi = deps.find(d => d.name === "fastapi");
+      expect(fastapi).toBeDefined();
+      expect(fastapi?.version).toBe("0.104.1");
+    });
+
+    it("should read Go dependencies from go.mod", async () => {
+      const goMod = `module example.com/myapp
+
+go 1.21
+
+require (
+	github.com/gin-gonic/gin v1.9.1
+	github.com/stretchr/testify v1.8.4
+)
+`;
+      fs.writeFileSync(path.join(tempDir, "go.mod"), goMod);
+
+      const { readDependencies } = await import("../src/linter/deps.js");
+      const deps = readDependencies(tempDir);
+
+      expect(deps.length).toBeGreaterThan(0);
+      const gin = deps.find(d => d.name.includes("gin"));
+      expect(gin).toBeDefined();
+    });
+  });
 });
