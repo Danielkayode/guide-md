@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main, master]
 
+env:
+  NODE_OPTIONS: --max-old-space-size=4096
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -21,9 +24,16 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
+          registry-url: 'https://registry.npmjs.org'
 
-      - name: Install dependencies
+      - name: Install dependencies (runs `prepare` -> builds CLI)
         run: npm ci
+
+      - name: Verify built CLI binary works
+        run: |
+          node dist/cli/index.cjs --version
+          node dist/cli/index.cjs lint GUIDE.md --json > /tmp/lint.json
+          echo "Lint exit: $?"
 
       - name: Run type check
         run: npm run build:typecheck
@@ -34,5 +44,83 @@ jobs:
       - name: Run tests
         run: npm test
 
-      - name: Build package
+      - name: Build package (verify build succeeds)
         run: npm run build
+
+  # Auto-publish a patch release when changes are merged to main
+  release-on-merge:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Bump patch version
+        id: version
+        run: |
+          npm version patch -m "chore: release %s [skip ci]"
+          echo "new_version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
+      - name: Push version commit and tag
+        run: |
+          git push origin HEAD:${{ github.ref }}
+          git push origin v${{ steps.version.outputs.new_version }}
+
+      - name: Install dependencies (fresh after version bump)
+        run: npm ci
+
+      - name: Run full verification before publish
+        run: |
+          npm run build:typecheck
+          npm test
+          node dist/cli/index.cjs --version
+          node dist/cli/index.cjs lint GUIDE.md --json > /tmp/lint.json
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.new_version }}
+          name: Release v${{ steps.version.outputs.new_version }}
+          body: |
+            ## Release v${{ steps.version.outputs.new_version }}
+
+            **Package:** @prismteam/linter@${{ steps.version.outputs.new_version }}
+
+            ### Installation
+            ```bash
+            npm install -g @prismteam/linter
+            ```
+
+            ### Changes
+            See [CHANGELOG.md](./CHANGELOG.md) for details.
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
