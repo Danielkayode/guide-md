@@ -5,8 +5,19 @@ import { GuideMdFrontmatter } from "../schema/index.js";
 import chalk from "chalk";
 
 // ─── Load External Configuration ───────────────────────────────────────────────
+// Resolve this module's own directory in both ESM (tsx/dev) and bundled CJS.
+// `import.meta.url` is undefined inside esbuild's CJS bundle; `__dirname` is
+// unavailable in ESM, so support both. signatures.json ships next to this file.
+function moduleDir(): string {
+  // Bundled CJS (esbuild) provides neither `__dirname` nor `import.meta.url`;
+  // `require.main.filename` is the bundle entry point (dist/cli/index.cjs).
+  if (typeof require !== "undefined" && require.main?.filename) {
+    return path.dirname(require.main.filename);
+  }
+  return path.dirname(fileURLToPath(import.meta.url));
+}
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __dirname = moduleDir();
 const CONFIG_PATH = path.join(__dirname, "signatures.json");
 
 interface SignatureConfig {

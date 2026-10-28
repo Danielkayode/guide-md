@@ -24,10 +24,45 @@ import matter from "gray-matter";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { validateAllSkills, SkillValidationResult } from "../skills/index.js";
 import { fileURLToPath } from "node:url";
+import { loadConfig, GuideMdConfig } from "../config/index.js";
+import { generateCompletion, printCompletionUsage, CompletionShell } from "../completion/index.js";
+import { runCheck } from "../check/index.js";
+import { migrateGuide } from "../migrate/index.js";
+
+// ─── Project config ────────────────────────────────────────────────────────────
+// guidemd.config.json (JSONC-tolerant) sets project-level defaults. CLI flags
+// always win over config-file values.
+const CONFIG = loadConfig();
+
+function withConfig(
+  configSection: Record<string, unknown> | undefined,
+  cliOpts: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged = { ...(configSection ?? {}) };
+  for (const [key, value] of Object.entries(cliOpts)) {
+    if (value !== undefined) {
+      merged[key] = value;
+    }
+  }
+  return merged;
+}
+
+// ─── Helpers ───────────────────────────────────────────────────────────────────
+// Resolve this module's own directory in both ESM (tsx/dev) and bundled CJS.
+// `import.meta.url` is undefined inside esbuild's CJS bundle; `__dirname` is
+// unavailable in ESM, so support both.
+function moduleDir(): string {
+  // Bundled CJS (esbuild) provides neither `__dirname` nor `import.meta.url`;
+  // `require.main.filename` is the bundle entry point (dist/cli/index.cjs).
+  if (typeof require !== "undefined" && require.main?.filename) {
+    return path.dirname(require.main.filename);
+  }
+  return path.dirname(fileURLToPath(import.meta.url));
+}
 
 // ─── Version ───────────────────────────────────────────────────────────────────
 // Read version from package.json so --version always matches the published package
-const PKG_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../package.json");
+const PKG_PATH = path.join(moduleDir(), "../../package.json");
 const PKG_VERSION = (() => {
   try {
     const pkg = JSON.parse(fs.readFileSync(PKG_PATH, "utf-8"));
@@ -62,6 +97,102 @@ function printBanner(): void {
   console.log(chalk.bold.cyan("  ║     GUIDE.md  Linter      ║"));
   console.log(chalk.bold.cyan("  ║  AI Context Interface     ║"));
   console.log(chalk.bold.cyan("  ╚═══════════════════════════╝\n"));
+}
+
+// ─── SARIF output ──────────────────────────────────────────────────────────────
+// SARIF 2.1.0 for CI code-scanning integrations (GitHub, Azure DevOps, etc.)
+interface SarifArtifactLocation {
+  uri: string;
+}
+
+interface SarifLocation {
+  physicalLocation: SarifArtifactLocation;
+}
+
+interface SarifResult {
+  ruleId: string;
+  ruleIndex: number;
+  level: "error" | "warning" | "none";
+  message: { text: string };
+  locations: SarifLocation[];
+}
+
+interface SarifRule {
+  id: string;
+  name: string;
+  shortDescription: { text: string };
+  fullDescription: { text: string };
+  defaultConfiguration: { level: "error" | "warning" | "none" };
+}
+
+function formatSarif(
+  file: string,
+  result: LintResult,
+): string {
+  const rules: Record<string, SarifRule> = {};
+  const results: SarifResult[] = [];
+
+  result.diagnostics.forEach((d, i) => {
+    if (!rules[d.field]) {
+      rules[d.field] = {
+        id: d.field,
+        name: d.field,
+        shortDescription: { text: d.message },
+        fullDescription: { text: d.message },
+        defaultConfiguration: { level: d.severity },
+      };
+    }
+    results.push({
+      ruleId: d.field,
+      ruleIndex: i,
+      level: d.severity,
+      message: { text: d.message },
+      locations: [{ physicalLocation: { uri: file } }],
+    });
+  });
+
+  const sarif = {
+    "$schema":
+      "https://docs.oasis-open.org/sarif/sarif-2.1.0/csprd01/schemas/json-schema-2.1.0-2.json",
+    version: "2.1.0",
+    runs: [
+      {
+        tool: {
+          driver: {
+            name: "guidemd",
+            version: PKG_VERSION,
+            rules: Object.values(rules),
+          },
+        },
+        results,
+      },
+    ],
+  };
+
+  return JSON.stringify(sarif, null, 2);
+}
+
+/**
+ * Emit lint results in the requested format and exit with the right code.
+ * SARIF 2.1.0 is suitable for CI code-scanning (GitHub, Azure DevOps, …).
+ */
+function emitLintResult(
+  file: string,
+  result: LintResult,
+  opts: LintOptions & { format?: string },
+): void {
+  if (opts.format === "sarif") {
+    console.log(formatSarif(file, result));
+    process.exit(result.valid ? 0 : 1);
+    return;
+  }
+  if (opts.json) {
+    console.log(JSON.stringify(result, null, 2));
+    process.exit(result.valid ? 0 : 1);
+    return;
+  }
+  printDiagnostics(result);
+  exitSummary(result);
 }
 
 function printDiagnostics(result: LintResult): void {
@@ -221,6 +352,7 @@ interface LintOptions {
   sync?: boolean;
   stats?: boolean;
   skipSecretScan?: boolean;
+  format?: "text" | "json" | "sarif";
 }
 
 interface InitOptions {
@@ -242,16 +374,42 @@ program
   .option("--sync", "Detect and sync drift between frontmatter and actual project files")
   .option("--stats", "Output Context Density Score comparing GUIDE.md to total repository size")
   .option("--skip-secret-scan", "Skip scanning for secrets (not recommended)")
+  .option(
+    "--format <type>",
+    "Output format: text, json, or sarif (for CI code scanning)",
+    "text",
+  )
   .action(async (file: string = "GUIDE.md", opts: LintOptions) => {
+    // Config file defaults (guidemd.config.json), CLI flags win
+    opts = withConfig(CONFIG.lint, opts as Record<string, unknown>) as LintOptions;
     const target = path.resolve(file);
 
-    if (!opts.json) {
+    // SARIF is machine-readable JSON; suppress the banner so output parses cleanly
+    if (!opts.json && opts.format !== "sarif") {
       printBanner();
       console.log(`  ${ICONS.info} Linting: ${chalk.underline(target)}\n`);
     }
 
     const parsed = parseGuideFile(target);
     if (!parsed.success) {
+      if (opts.format === "sarif") {
+        const result: LintResult = {
+          valid: false,
+          file: target,
+          diagnostics: [
+            {
+              severity: "error",
+              source: "schema",
+              field: "parse",
+              message: parsed.error,
+            },
+          ],
+          data: null,
+        };
+        console.log(formatSarif(target, result));
+        process.exit(1);
+        return;
+      }
       if (opts.json) {
         console.log(JSON.stringify({ valid: false, error: parsed.error }));
       } else {
@@ -292,24 +450,14 @@ program
         ]
       };
       
-      if (opts.json) {
-        console.log(JSON.stringify(result, null, 2));
-        process.exit(1);
-        return;
-      }
-      
-      printDiagnostics(result);
-      exitSummary(result);
+      emitLintResult(target, result, opts);
       return;
     }
     
     if (!resolveResult) {
       const result = await lintGuideFile(target, { skipSecretScan: opts.skipSecretScan });
-      if (opts.json) {
-        console.log(JSON.stringify(result, null, 2));
-        process.exit(1);
-        return;
-      }
+      emitLintResult(target, result, opts);
+      return;
       printDiagnostics(result);
       exitSummary(result);
       return;
@@ -352,9 +500,16 @@ program
       // Note: fixGuideFile currently doesn't handle inheritance.
       // For now, it fixes the local file.
 
-      if (opts.json) {
-        console.log(JSON.stringify(fixResult, null, 2));
-        process.exit(fixResult.diagnostics.filter((d) => d.severity === "error").length === 0 ? 0 : 1);
+      if (opts.json || opts.format === "sarif") {
+        const fixLintResult: LintResult = {
+          valid:
+            fixResult.diagnostics.filter((d) => d.severity === "error")
+              .length === 0,
+          file: target,
+          diagnostics: fixResult.diagnostics,
+          data: fixResult.data,
+        };
+        emitLintResult(target, fixLintResult, opts);
         return;
       }
 
@@ -413,6 +568,11 @@ program
         diagnostics: allDiagnostics,
       };
 
+      if (opts.format === "sarif") {
+        console.log(formatSarif(target, result));
+        process.exit(result.valid ? 0 : 1);
+        return;
+      }
       if (opts.json) {
         let output: any = result;
         if (opts.stats) {
@@ -653,9 +813,12 @@ program
 program
   .command("doctor [file]")
   .description("Deep static analysis to find logic conflicts and architectural drift")
-  .action(async (file: string = "GUIDE.md") => {
+  .option("--fix", "Auto-remediate safe fingerprint mismatches (language, framework, testing)")
+  .action(async (file: string = "GUIDE.md", opts: { fix?: boolean }) => {
     printBanner();
     const targetFile = path.resolve(file);
+    // Config file defaults (guidemd.config.json), CLI flags win
+    opts = withConfig(CONFIG.doctor, opts as Record<string, unknown>) as { fix?: boolean };
     console.log(`  ${ICONS.doctor} Running Deep Analysis: ${chalk.underline(targetFile)}\n`);
 
     const parsed = parseGuideFile(targetFile);
@@ -670,7 +833,89 @@ program
       process.exit(1);
     }
 
-    const report = await runDoctor(schemaResult.data, parsed.content);
+    const projectRoot = path.dirname(targetFile);
+    let report = await runDoctor(schemaResult.data, parsed.content, projectRoot);
+
+    // Auto-remediate safe fingerprint mismatches when --fix is set
+    if (opts.fix) {
+      const applied: string[] = [];
+      const nextData = { ...schemaResult.data };
+
+      // 1. language: tsconfig.json present but GUIDE.md language isn't TypeScript
+      const langIssue = report.issues.find(i => i.field === "language" && i.severity === "error");
+      const tsconfigPath = path.join(projectRoot, "tsconfig.json");
+      if (langIssue && fs.existsSync(tsconfigPath)) {
+        const langs = Array.isArray(nextData.language) ? nextData.language : nextData.language ? [nextData.language] : [];
+        const hasTS = langs.some(l => typeof l === "string" && l.toLowerCase() === "typescript");
+        if (!hasTS) {
+          nextData.language = "typescript";
+          applied.push("language: typescript");
+        }
+      }
+
+      // 2. framework: detected framework not listed in GUIDE.md
+      const fwIssue = report.issues.find(i => i.field === "framework");
+      if (fwIssue) {
+        const detected = detectFramework(projectRoot);
+        if (detected) {
+          const name = detected.replace(/@.*$/, "").replace(/^@[^/]+\//, "");
+          const fw = nextData.framework;
+          const fwList = Array.isArray(fw) ? fw : fw ? [fw] : [];
+          if (!fwList.some(f => f?.toLowerCase().includes(name.toLowerCase()))) {
+            nextData.framework = [...fwList, detected];
+            applied.push(`framework: ${detected}`);
+          }
+        }
+      }
+
+      // 3. testing.framework: detected test runner not configured
+      const testIssue = report.issues.find(i => i.field === "testing.framework");
+      if (testIssue) {
+        let detectedTest: string | null = null;
+        const pkgPath = path.join(projectRoot, "package.json");
+        if (fs.existsSync(pkgPath)) {
+          try {
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+            const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
+            for (const runner of ["vitest", "jest", "@playwright/test", "cypress"]) {
+              if (allDeps[runner]) { detectedTest = runner; break; }
+            }
+          } catch { /* ignore bad package.json */ }
+        }
+        if (detectedTest && (!nextData.testing || !nextData.testing.framework)) {
+          nextData.testing = {
+            ...(nextData.testing ?? {}),
+            required: true,
+            test_alongside_code: nextData.testing?.test_alongside_code ?? false,
+            framework: detectedTest,
+          };
+          applied.push(`testing.framework: ${detectedTest}`);
+        }
+      }
+
+      if (applied.length > 0) {
+        const originalContent = fs.readFileSync(targetFile, "utf-8");
+        const matterParsed = matter(originalContent);
+        const newContent = matter.stringify(matterParsed.content, nextData);
+        fs.writeFileSync(targetFile, newContent, "utf-8");
+        console.log(`  ${ICONS.success} ${chalk.green("Auto-fixed:")}`);
+        applied.forEach(a => console.log(`    ${chalk.dim("•")} ${a}`));
+        console.log();
+        // Re-run doctor on the fixed file
+        const reparsed = parseGuideFile(targetFile);
+        if (reparsed.success) {
+          const reschema = GuideMdSchema.safeParse(reparsed.data);
+          if (reschema.success) {
+            const fixedReport = await runDoctor(reschema.data, reparsed.content, projectRoot);
+            report = fixedReport;
+            const remainingErrors = fixedReport.issues.filter(i => i.severity === "error");
+            console.log(`  ${ICONS.info} Re-scanned: ${remainingErrors.length} error(s) remain.`);
+          }
+        }
+      } else {
+        console.log(`  ${ICONS.info} ${chalk.dim("No safe auto-fixes available.")}`);
+      }
+    }
 
     // Print Stats
     console.log(chalk.bold(`  Scan Results:`));
@@ -778,13 +1023,24 @@ program
     console.log(`    ${chalk.dim("•")} Estimated Total Tokens: ${chalk.cyan(report.totalTokens)}`);
     console.log(`    ${chalk.dim("•")} Word Count (MD): ${parsed.content.split(/\s+/).length}\n`);
 
-    // 2. Compatibility Table
+    // 2. Compatibility Table (rendered manually: console.table adds index
+    // columns and mangles chalk-colored strings, which made the output hard
+    // to read and grep)
     console.log(chalk.bold("  Model Compatibility:"));
-    console.table(report.compatibility.map(c => ({
-      Model: c.model,
-      "Usage %": c.usagePercentage.toFixed(2) + "%",
-      "Status": c.usagePercentage < 10 ? chalk.green("Safe") : c.usagePercentage < 50 ? chalk.yellow("Moderate") : chalk.red("Heavy")
-    })));
+    const rows = report.compatibility.map(c => ({
+      model: c.model,
+      usage: c.usagePercentage.toFixed(2) + "%",
+      status: c.usagePercentage < 10 ? "Safe" : c.usagePercentage < 50 ? "Moderate" : "Heavy",
+    }));
+    const modelWidth = Math.max(8, ...rows.map(r => r.model.length));
+    const usageWidth = Math.max(9, ...rows.map(r => r.usage.length));
+    console.log(`    ${"Model".padEnd(modelWidth)}  ${"Usage %".padEnd(usageWidth)}  Status`);
+    console.log(`    ${"-".repeat(modelWidth)}  ${"-".repeat(usageWidth)}  ------`);
+    for (const r of rows) {
+      const statusColor =
+        r.status === "Safe" ? chalk.green : r.status === "Moderate" ? chalk.yellow : chalk.red;
+      console.log(`    ${r.model.padEnd(modelWidth)}  ${r.usage.padEnd(usageWidth)}  ${statusColor(r.status)}`);
+    }
     console.log();
 
     // 3. Instruction/Code Ratio
@@ -1436,12 +1692,19 @@ program
 // ── guidemd info ──────────────────────────────────────────────────────────────
 interface InfoOptions {
   json?: boolean;
+  minScore?: number;
 }
 
 program
   .command("info [file]")
-  .description("Display a high-level health report of the project's AI-readiness")
+  .description(
+    "Display a high-level health report of the project's AI-readiness",
+  )
   .option("--json", "Output results as JSON (for CI/tooling integration)")
+  .option(
+    "--min-score <n>",
+    "CI gate: exit non-zero when the AI-readiness score is below N",
+  )
   .action((file: string = "GUIDE.md", opts: InfoOptions) => {
     if (!opts.json) {
       printBanner();
@@ -1471,15 +1734,21 @@ program
 
     const report = generateHealthReport(result.data, parsed.content);
 
+    const score = report.score;
+    const minScore = opts.minScore ?? CONFIG.info?.minScore ?? 0;
+
     if (opts.json) {
       const wordCount = parsed.content.split(/\s+/).filter((w: string) => w.length > 0).length;
       const jsonOutput = {
         valid: true,
-        score: report.score,
-        grade: report.score >= 90 ? "A" : report.score >= 80 ? "B" : report.score >= 70 ? "C" : "D",
+        score,
+        grade:
+          score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : "D",
         project: result.data.project,
         language: result.data.language,
         framework: result.data.framework,
+        minScore,
+        passesGate: minScore === 0 || score >= minScore,
         stats: {
           wordCount,
           tokenDensity: report.tokenDensity,
@@ -1495,10 +1764,23 @@ program
         suggestions: report.suggestions,
       };
       console.log(JSON.stringify(jsonOutput, null, 2));
+      if (minScore > 0 && score < minScore) {
+        process.exit(1);
+      }
       return;
     }
 
     printDashboard(report);
+
+    // CI gate for human-readable output too
+    if (minScore > 0 && score < minScore) {
+      console.log(
+        `\n  ${ICONS.error} ${chalk.red(
+          `CI gate failed: score ${score}/100 is below min-score ${minScore}`,
+        )}`,
+      );
+      process.exit(1);
+    }
   });
 
 // ── guidemd diff ─────────────────────────────────────────────────────────────
@@ -2024,5 +2306,120 @@ function generateSpecHtml(): string {
 </body>
 </html>`;
 }
+
+// ── guidemd check ─────────────────────────────────────────────────────────────
+program
+  .command("check [file]")
+  .description("CI gate: runs lint + info + doctor + verify and reports combined status")
+  .option("--json", "Output combined results as JSON")
+  .option("--min-score <n>", "Fail if AI-readiness score is below N (default: 80)")
+  .action(async (file: string = "GUIDE.md", opts: { json?: boolean; minScore?: string }) => {
+    const minScore = opts.minScore ? Number(opts.minScore) : 80;
+
+    if (!opts.json) {
+      printBanner();
+      console.log(`  ${ICONS.info} Running CI check on: ${chalk.underline(path.resolve(file))}\\n`);
+    }
+
+    const result = await runCheck(file, { minScore });
+
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      process.exit(result.valid ? 0 : 1);
+      return;
+    }
+
+    const checks = result.checks;
+    if (checks.lint) {
+      const l = checks.lint as { valid: boolean; errors: number; warnings: number };
+      console.log(
+        `  ${l.valid ? ICONS.success : ICONS.error} lint: ${chalk.bold(l.valid ? "pass" : `fail (${l.errors} error(s))`)}`,
+      );
+    }
+    if (checks.info) {
+      const i = checks.info as { valid: boolean; score: number; grade: string; minScore: number; passesGate: boolean };
+      console.log(
+        `  ${i.valid ? ICONS.success : ICONS.error} info: score ${chalk.bold(`${i.score}/100 (grade ${i.grade})`)} (min: ${i.minScore})`,
+      );
+    }
+    if (checks.doctor) {
+      const d = checks.doctor as { valid: boolean; errors: number; warnings: number };
+      console.log(
+        `  ${d.valid ? ICONS.success : ICONS.error} doctor: ${chalk.bold(d.valid ? "pass" : `fail (${d.errors} error(s))`)}`,
+      );
+    }
+    if (checks.verify) {
+      const v = checks.verify as { valid: boolean; score: number };
+      console.log(
+        `  ${v.valid ? ICONS.success : ICONS.error} verify: ${chalk.bold(v.valid ? "pass" : "fail (insufficient cold-start context)")} (${v.score}/100)`,
+      );
+    }
+    if (checks.error) {
+      console.log(`  ${ICONS.error} ${chalk.red(checks.error as string)}`);
+    }
+
+    console.log("");
+    if (result.valid) {
+      console.log(`  ${ICONS.success} ${chalk.green.bold("All checks passed")}`);
+    } else {
+      console.log(`  ${ICONS.error} ${chalk.red.bold("One or more checks failed")}`);
+    }
+    process.exit(result.valid ? 0 : 1);
+  });
+
+// ── guidemd migrate ───────────────────────────────────────────────────────────
+program
+  .command("migrate [file]")
+  .description("Migrate GUIDE.md frontmatter to the current schema version")
+  .option("--force", "Overwrite even if already on the latest version")
+  .action(async (file: string = "GUIDE.md", opts: { force?: boolean }) => {
+    printBanner();
+
+    try {
+      const result = migrateGuide(file, { force: Boolean(opts.force), write: true });
+
+      if (!result.changed) {
+        console.log(
+          `  ${ICONS.success} ${chalk.green(
+            `Already on schema version ${result.version}. No changes needed.`,
+          )}`,
+        );
+        return;
+      }
+
+      console.log(`  ${ICONS.success} ${chalk.green("Migrated:")}`);
+      result.changes.forEach((c) => console.log(`    ${chalk.dim("•")} ${c}`));
+      console.log(`  ${ICONS.info} guide_version is now ${result.version}`);
+    } catch (e) {
+      console.log(`  ${ICONS.error} ${chalk.red(e instanceof Error ? e.message : String(e))}`);
+      process.exit(1);
+    }
+  });
+
+// ── guidemd completion ────────────────────────────────────────────────────────
+program
+  .command("completion [shell]")
+  .description("Generate shell completion scripts (bash, zsh, fish, powershell)")
+  .action((shell: CompletionShell = "bash") => {
+    const valid: CompletionShell[] = ["bash", "zsh", "fish", "powershell"];
+    if (!valid.includes(shell)) {
+      console.error(
+        `  ${ICONS.error} ${chalk.red(
+          `Unsupported shell: ${shell}. Supported: ${valid.join(", ")}`,
+        )}`,
+      );
+      process.exit(1);
+    }
+    try {
+      console.log(generateCompletion(shell));
+    } catch (e) {
+      console.error(
+        `  ${ICONS.error} ${chalk.red(
+          e instanceof Error ? e.message : String(e),
+        )}`,
+      );
+      process.exit(1);
+    }
+  });
 
 program.parse();

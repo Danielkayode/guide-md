@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { importGuideFile, writeImportedGuide, detectImportSource, ImportResult } from "../src/importer/index.js";
 import { exportGuide } from "../src/exporter/index.js";
+import { parseGuideFile } from "../src/parser/index.js";
 import { GuideMdSchema, GuideMdFrontmatter } from "../src/schema/index.js";
 import fs from "node:fs";
 import path from "node:path";
@@ -214,6 +215,99 @@ Follow Python best practices.
       expect(result.data?.project).toBe("my-windsurf-project");
       expect(result.data?.language).toBe("python");
       expect(result.data?.framework).toBe("fastapi");
+    });
+  });
+
+  describe("round-trip: body survives import and export", () => {
+    it("import preserves the complete AGENTS.md body (nothing silently dropped)", () => {
+      const agentsContent = `# forge-project
+
+Opening paragraph with project context.
+
+## Constraints
+- **Language**: typescript
+- **Testing**: vitest with 90% coverage
+
+## Rules
+- **Stronghold gotcha**: Never call \`vault_list_meta\` without a nonce; it returns \`__FORGE__BACKEND__\`.
+- **Scope Creep Prevention**: Only modify files/functions explicitly referenced
+
+## Instructions
+These are the detailed instructions with \`code spans\` and **bold** text.
+`;
+
+      const filePath = path.join(tempDir, "AGENTS.md");
+      fs.writeFileSync(filePath, agentsContent);
+      const result = importGuideFile(filePath);
+
+      expect(result.success).toBe(true);
+      // The complete source body must survive in the generated GUIDE.md body
+      expect(result.content).toBe(agentsContent);
+      expect(result.content).toContain("Stronghold gotcha");
+      expect(result.content).toContain("vault_list_meta");
+      expect(result.content).toContain("__FORGE__BACKEND__");
+      expect(result.content).toContain("code spans");
+      // Parsed metadata lands in the frontmatter, not in place of the body
+      expect(result.data?.project).toBe("forge-project");
+      expect(result.data?.language).toBe("typescript");
+      expect(result.data?.guardrails?.scope_creep_prevention).toBe(true);
+    });
+
+    it("import preserves the complete CLAUDE.md body (XML blocks intact)", () => {
+      const claudeContent = `<context>
+# Project: claude-project
+A sample project description.
+## Tech Stack
+- Language: typescript
+</context>
+<rules>
+## Instructions
+Follow these rules carefully.
+</rules>`;
+
+      const filePath = path.join(tempDir, "CLAUDE.md");
+      fs.writeFileSync(filePath, claudeContent);
+      const result = importGuideFile(filePath);
+
+      expect(result.success).toBe(true);
+      expect(result.content).toBe(claudeContent);
+      expect(result.content).toContain("<context>");
+      expect(result.content).toContain("</rules>");
+      expect(result.data?.project).toBe("claude-project");
+    });
+
+    it("import → export round-trip keeps the markdown body unescaped", () => {
+      const agentsContent = `# roundtrip-project
+
+A project description that explains what this is for.
+
+## Instructions
+Use \`vault_list_meta\` carefully and **never** guess types. See the Stronghold gotcha.
+`;
+
+      fs.writeFileSync(path.join(tempDir, "AGENTS.md"), agentsContent);
+      const importResult = importGuideFile(path.join(tempDir, "AGENTS.md"));
+      expect(importResult.success).toBe(true);
+
+      const guidePath = path.join(tempDir, "GUIDE.md");
+      const writeResult = writeImportedGuide(importResult, guidePath);
+      expect(writeResult.success).toBe(true);
+
+      const parsed = parseGuideFile(guidePath);
+      expect(parsed.success).toBe(true);
+      const schemaResult = GuideMdSchema.safeParse(parsed.data);
+      expect(schemaResult.success).toBe(true);
+
+      const exportResults = exportGuide(schemaResult.data, parsed.content, tempDir, "agents");
+      expect(exportResults.every(r => r.success)).toBe(true);
+
+      const exported = fs.readFileSync(path.join(tempDir, "AGENTS.md"), "utf-8");
+      // Code spans, bold text and identifiers must survive export unescaped
+      expect(exported).toContain("`vault_list_meta`");
+      expect(exported).toContain("**never**");
+      expect(exported).toContain("Stronghold gotcha");
+      expect(exported).not.toContain("\\`");
+      expect(exported).not.toContain("\\*");
     });
   });
 

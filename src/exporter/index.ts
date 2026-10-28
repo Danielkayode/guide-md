@@ -172,22 +172,25 @@ const AgentsAdapter: ExporterAdapter = {
 
     const safeProject = escapeMarkdown(data.project ?? "untitled-project");
     const safeDescription = data.description ? escapeMarkdown(data.description) : "";
-    const safeLanguage = Array.isArray(data.language) 
-      ? safeJoin(data.language, ", ", escapeMarkdown) 
+    const safeLanguage = Array.isArray(data.language)
+      ? safeJoin(data.language, ", ", escapeMarkdown)
       : escapeMarkdown(data.language ?? "typescript");
     const safeRuntime = data.runtime ? `- **Runtime**: ${escapeMarkdown(data.runtime)}` : "";
-    const safeFramework = data.framework 
-      ? `- **Framework**: ${Array.isArray(data.framework) 
-          ? safeJoin(data.framework, ", ", escapeMarkdown) 
-          : escapeMarkdown(data.framework)}` 
+    const safeFramework = data.framework
+      ? `- **Framework**: ${Array.isArray(data.framework)
+          ? safeJoin(data.framework, ", ", escapeMarkdown)
+          : escapeMarkdown(data.framework)}`
       : "";
-    const safeTesting = data.testing?.required 
-      ? `- **Testing**: ${escapeMarkdown(data.testing.framework ?? "unknown")} with ${data.testing.coverage_threshold ?? 0}% coverage` 
+    const safeTesting = data.testing?.required
+      ? `- **Testing**: ${escapeMarkdown(data.testing.framework ?? "unknown")} with ${data.testing.coverage_threshold ?? 0}% coverage`
       : "";
-    const safeArchitecture = data.context?.architecture_pattern 
-      ? `- **Architecture**: ${escapeMarkdown(data.context.architecture_pattern)}` 
+    const safeArchitecture = data.context?.architecture_pattern
+      ? `- **Architecture**: ${escapeMarkdown(data.context.architecture_pattern)}`
       : "";
-    const safeInstructions = escapeMarkdown(instructions.trim());
+    // The instructions body IS markdown — it must never be escaped. Only
+    // interpolated data values above are escaped, to keep agents' code spans,
+    // bold text, and grep-able identifiers intact.
+    const safeInstructions = instructions.trim();
 
     return `# ${safeProject}
 
@@ -241,8 +244,10 @@ ${data.guardrails.no_hallucination ? "- Do not invent APIs, packages, or type si
     
     const safeProject = escapeMarkdown(data.project ?? "untitled-project");
     const safeDescription = data.description ? escapeMarkdown(data.description) : "";
-    const safeInstructions = escapeMarkdown(instructions.trim());
-    
+    // The instructions body IS markdown — never escape it. Only interpolated
+    // data values above are escaped.
+    const safeInstructions = instructions.trim();
+
     return `<!-- guidemd:generated -->
 # ${safeProject}
 

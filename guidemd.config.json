@@ -1,0 +1,26 @@
+{
+  // guidemd.config.json — project-level defaults for @prismteam/linter
+  // CLI flags always override these values.
+
+  "file": "GUIDE.md",
+
+  "lint": {
+    "json": false,
+    "skipSecretScan": false
+  },
+
+  "info": {
+    // CI gate: fail when AI-readiness score falls below this threshold
+    "minScore": 80
+  },
+
+  "export": {
+    "target": "agents",
+    "out": ".",
+    "manifest": false
+  },
+
+  "doctor": {
+    "fix": false
+  }
+}

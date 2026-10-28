@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.5] - 2026-10-28
+
+### Added
+
+- Project config file `guidemd.config.json` (JSONC-tolerant): project-level defaults for `lint`, `info`, `export`, and `doctor`. CLI flags always override config values.
+- `guidemd info --min-score <n>`: CI quality gate — exits non-zero when the AI-readiness score falls below N (also settable via `info.minScore` in config). JSON output includes `minScore` and `passesGate`.
+- `guidemd lint --format sarif`: SARIF 2.1.0 output for CI code-scanning integrations (GitHub, Azure DevOps, …). Banner is suppressed so output parses as clean JSON.
+- `guidemd doctor --fix`: auto-remediates safe fingerprint mismatches — language (from tsconfig.json), framework (from package.json dependencies), and testing.framework (from devDependencies) — then re-scans.
+- `guidemd completion <shell>`: shell completion scripts for bash, zsh, fish, and powershell.
+- `guidemd check [file]`: unified CI gate — runs lint + info + doctor + verify and reports combined status with `--json` and `--min-score` options.
+- `guidemd migrate [file]`: migrates GUIDE.md frontmatter to the current schema version, adding missing required fields with defaults.
+
+### Fixed
+
+- `guidemd import` no longer destroys the imported file body. The complete source document is preserved in GUIDE.md — parsed metadata lands in the frontmatter and the body is never stripped or transformed, so import → export round-trips losslessly. A round-trip test now asserts the body survives.
+- `guidemd export -t agents` and `-t copilot` no longer escape Markdown in the instructions body (backticks, asterisks, underscores were being escaped, corrupting code spans and identifiers). Only interpolated data values are escaped; the body is markdown and stays markdown.
+- Doctor `signatures.json` is resolved against its own directory instead of `cwd`, so every command stops printing the missing-signatures warning.
+- Version single source of truth: `--version` reads package.json, and npm, package.json and CHANGELOG now all agree (0.2.5).
+
+## [0.2.4] - 2026-04-25
+
+### Released
+
+- Intermediate stable release of `@prismteam/linter`. Import/export reliability fixes landed in 0.2.5.
+
 ## [0.2.3] - 2026-04-22
 
 ### Added
