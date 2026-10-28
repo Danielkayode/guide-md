@@ -28,6 +28,9 @@ import { loadConfig, GuideMdConfig } from "../config/index.js";
 import { generateCompletion, printCompletionUsage, CompletionShell } from "../completion/index.js";
 import { runCheck } from "../check/index.js";
 import { migrateGuide } from "../migrate/index.js";
+import { scanDirectory } from "../scan/index.js";
+import { auditFile } from "../audit/index.js";
+import { mergeGuides } from "../merge/index.js";
 
 // ─── Project config ────────────────────────────────────────────────────────────
 // guidemd.config.json (JSONC-tolerant) sets project-level defaults. CLI flags
@@ -2418,6 +2421,185 @@ program
           e instanceof Error ? e.message : String(e),
         )}`,
       );
+      process.exit(1);
+    }
+  });
+
+// ── guidemd scan ──────────────────────────────────────────────────────────────
+program
+  .command("scan [dir]")
+  .description("Scan a directory for AI context files and report their health")
+  .option("--json", "Output results as JSON")
+  .action(async (dir: string = ".", opts: { json?: boolean }) => {
+    const target = path.resolve(dir);
+
+    if (!opts.json) {
+      printBanner();
+      console.log(`  ${ICONS.info} Scanning: ${chalk.underline(target)}\n`);
+    }
+
+    const result = await scanDirectory(target);
+
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+
+    console.log(`  ${ICONS.info} Found ${result.totalFiles} AI context file(s)\n`);
+
+    // Group by type
+    const byType: Record<string, typeof result.files> = {};
+    for (const f of result.files) {
+      const group = byType[f.type] ?? [];
+      group.push(f);
+      byType[f.type] = group;
+    }
+
+    for (const [type, files] of Object.entries(byType)) {
+      console.log(`  ${chalk.bold(type.toUpperCase())} (${files.length}):`);
+      for (const f of files) {
+        const icon = f.valid ? ICONS.success : ICONS.error;
+        const secretIcon = f.hasSecrets ? " 🔐" : "";
+        const scoreInfo = f.score !== undefined ? ` (${f.score}/100 - ${f.grade})` : "";
+        console.log(`    ${icon} ${f.path}${scoreInfo}${secretIcon}`);
+        for (const err of f.errors.slice(0, 3)) {
+          console.log(`      ${ICONS.error} ${chalk.red(err)}`);
+        }
+        for (const warn of f.warnings.slice(0, 3)) {
+          console.log(`      ${ICONS.warning} ${chalk.yellow(warn)}`);
+        }
+      }
+      console.log();
+    }
+
+    console.log(`  ${chalk.bold("Summary:")}`);
+    console.log(`    Valid: ${result.summary.valid}`);
+    console.log(`    Invalid: ${result.summary.invalid}`);
+    console.log(`    With secrets: ${result.summary.withSecrets}`);
+    console.log(`    Average score: ${result.summary.averageScore}/100`);
+    console.log();
+
+    console.log(`  ${chalk.bold("Recommendations:")}`);
+    for (const rec of result.recommendations) {
+      console.log(`    ${ICONS.info} ${rec}`);
+    }
+  });
+
+// ── guidemd audit ─────────────────────────────────────────────────────────────
+program
+  .command("audit [file]")
+  .description("Security audit: detect secrets, dangerous patterns, and best practices")
+  .option("--json", "Output results as JSON")
+  .action((file: string = "GUIDE.md", opts: { json?: boolean }) => {
+    const target = path.resolve(file);
+    const result = auditFile(target);
+
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+
+    printBanner();
+    console.log(`  ${ICONS.info} Auditing: ${chalk.underline(target)}\n`);
+
+    const statusIcon = result.passed ? ICONS.success : ICONS.error;
+    const statusText = result.passed
+      ? chalk.green("PASSED")
+      : chalk.red("FAILED");
+
+    console.log(`  ${statusIcon} Audit: ${statusText}`);
+    console.log(`    Total issues: ${chalk.bold(result.totalIssues)}`);
+    console.log(`    Errors: ${chalk.red(result.errors)}`);
+    console.log(`    Warnings: ${chalk.yellow(result.warnings)}`);
+    console.log(`    Info: ${chalk.cyan(result.info)}\n`);
+
+    if (result.issues.length > 0) {
+      // Group by severity
+      const errors = result.issues.filter(i => i.severity === "error");
+      const warnings = result.issues.filter(i => i.severity === "warning");
+      const infos = result.issues.filter(i => i.severity === "info");
+
+      if (errors.length > 0) {
+        console.log(`  ${chalk.red.bold("Errors:")}`);
+        for (const issue of errors) {
+          const lineInfo = issue.line ? ` (line ${issue.line})` : "";
+          console.log(`    ${ICONS.error} ${issue.message}${lineInfo}`);
+          console.log(`      ${chalk.dim("→")} ${issue.recommendation}`);
+        }
+        console.log();
+      }
+
+      if (warnings.length > 0) {
+        console.log(`  ${chalk.yellow.bold("Warnings:")}`);
+        for (const issue of warnings) {
+          const lineInfo = issue.line ? ` (line ${issue.line})` : "";
+          console.log(`    ${ICONS.warning} ${issue.message}${lineInfo}`);
+          console.log(`      ${chalk.dim("→")} ${issue.recommendation}`);
+        }
+        console.log();
+      }
+
+      if (infos.length > 0) {
+        console.log(`  ${chalk.cyan.bold("Info:")}`);
+        for (const issue of infos) {
+          const lineInfo = issue.line ? ` (line ${issue.line})` : "";
+          console.log(`    ${ICONS.info} ${issue.message}${lineInfo}`);
+          console.log(`      ${chalk.dim("→")} ${issue.recommendation}`);
+        }
+        console.log();
+      }
+    }
+
+    process.exit(result.passed ? 0 : 1);
+  });
+
+// ── guidemd merge ─────────────────────────────────────────────────────────────
+program
+  .command("merge [files...]")
+  .description("Merge multiple GUIDE.md files into one (monorepo support)")
+  .option("--output <file>", "Output file path", "./GUIDE.md")
+  .option("--force", "Overwrite even if no changes detected")
+  .action(async (files: string[] = ["GUIDE.md"], opts: { output?: string; force?: boolean }) => {
+    const output: string = opts.output ?? "./GUIDE.md";
+    if (files.length < 2) {
+      console.log(`  ${ICONS.error} ${chalk.red("At least 2 files are required to merge.")}`);
+      console.log(`  ${ICONS.info} Usage: guidemd merge file1.md file2.md --output merged.md`);
+      process.exit(1);
+    }
+
+    try {
+      printBanner();
+      console.log(`  ${ICONS.info} Merging ${files.length} file(s) into ${chalk.bold(output)}\n`);
+
+      const result = mergeGuides(files, output);
+
+      if (!result.changed && !opts.force) {
+        console.log(`  ${ICONS.success} ${chalk.green("No changes detected. Output file is already up to date.")}`);
+        return;
+      }
+
+      console.log(`  ${ICONS.success} ${chalk.green("Merged successfully!")}`);
+      console.log(`    Output: ${result.outputFile}`);
+      console.log(`    Merged from:`);
+      for (const f of result.mergedFrom) {
+        console.log(`      - ${f}`);
+      }
+
+      if (result.conflicts.length > 0) {
+        console.log(`\n  ${chalk.yellow.bold("Conflicts resolved:")}`);
+        for (const c of result.conflicts) {
+          const color = c.resolution === "overwritten" ? chalk.red : chalk.blue;
+          console.log(`    ${color("•")} ${c.field} → ${c.resolution} (from ${c.sourceFile})`);
+        }
+      }
+
+      console.log(`\n  ${ICONS.info} Merged frontmatter:`);
+      const mergedJson = JSON.stringify(result.mergedData, null, 2);
+      for (const line of mergedJson.split("\n")) {
+        console.log(`    ${line}`);
+      }
+    } catch (err) {
+      console.log(`  ${ICONS.error} ${chalk.red(err instanceof Error ? err.message : String(err))}`);
       process.exit(1);
     }
   });
