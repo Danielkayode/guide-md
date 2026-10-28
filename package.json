@@ -14,6 +14,7 @@
   ],
   "scripts": {
     "build": "npm run build:bundle",
+    "prepare": "npm run build",
     "build:bundle": "esbuild src/cli/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/cli/index.cjs --banner:js=\"#!/usr/bin/env node\" --external:esbuild && node -e \"require('fs').copyFileSync('src/doctor/signatures.json', 'dist/cli/signatures.json')\"",
     "build:typecheck": "tsc --noEmit",
     "dev": "tsx src/cli/index.ts",
