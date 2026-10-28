@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `guidemd info --min-score <n>`: CI quality gate — exits non-zero when the AI-readiness score falls below N (also settable via `info.minScore` in config). JSON output includes `minScore` and `passesGate`.
 - `guidemd lint --format sarif`: SARIF 2.1.0 output for CI code-scanning integrations (GitHub, Azure DevOps, …). Banner is suppressed so output parses as clean JSON.
 - `guidemd doctor --fix`: auto-remediates safe fingerprint mismatches — language (from tsconfig.json), framework (from package.json dependencies), and testing.framework (from devDependencies) — then re-scans.
+- `guidemd completion <shell>`: shell completion scripts for bash, zsh, fish, and powershell.
+- `guidemd check [file]`: unified CI gate — runs lint + info + doctor + verify and reports combined status with `--json` and `--min-score` options.
+- `guidemd migrate [file]`: migrates GUIDE.md frontmatter to the current schema version, adding missing required fields with defaults.
 
 ### Fixed
 

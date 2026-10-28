@@ -25,6 +25,9 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 import { validateAllSkills, SkillValidationResult } from "../skills/index.js";
 import { fileURLToPath } from "node:url";
 import { loadConfig, GuideMdConfig } from "../config/index.js";
+import { generateCompletion, printCompletionUsage, CompletionShell } from "../completion/index.js";
+import { runCheck } from "../check/index.js";
+import { migrateGuide } from "../migrate/index.js";
 
 // ─── Project config ────────────────────────────────────────────────────────────
 // guidemd.config.json (JSONC-tolerant) sets project-level defaults. CLI flags
@@ -2303,5 +2306,120 @@ function generateSpecHtml(): string {
 </body>
 </html>`;
 }
+
+// ── guidemd check ─────────────────────────────────────────────────────────────
+program
+  .command("check [file]")
+  .description("CI gate: runs lint + info + doctor + verify and reports combined status")
+  .option("--json", "Output combined results as JSON")
+  .option("--min-score <n>", "Fail if AI-readiness score is below N (default: 80)")
+  .action(async (file: string = "GUIDE.md", opts: { json?: boolean; minScore?: string }) => {
+    const minScore = opts.minScore ? Number(opts.minScore) : 80;
+
+    if (!opts.json) {
+      printBanner();
+      console.log(`  ${ICONS.info} Running CI check on: ${chalk.underline(path.resolve(file))}\\n`);
+    }
+
+    const result = await runCheck(file, { minScore });
+
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      process.exit(result.valid ? 0 : 1);
+      return;
+    }
+
+    const checks = result.checks;
+    if (checks.lint) {
+      const l = checks.lint as { valid: boolean; errors: number; warnings: number };
+      console.log(
+        `  ${l.valid ? ICONS.success : ICONS.error} lint: ${chalk.bold(l.valid ? "pass" : `fail (${l.errors} error(s))`)}`,
+      );
+    }
+    if (checks.info) {
+      const i = checks.info as { valid: boolean; score: number; grade: string; minScore: number; passesGate: boolean };
+      console.log(
+        `  ${i.valid ? ICONS.success : ICONS.error} info: score ${chalk.bold(`${i.score}/100 (grade ${i.grade})`)} (min: ${i.minScore})`,
+      );
+    }
+    if (checks.doctor) {
+      const d = checks.doctor as { valid: boolean; errors: number; warnings: number };
+      console.log(
+        `  ${d.valid ? ICONS.success : ICONS.error} doctor: ${chalk.bold(d.valid ? "pass" : `fail (${d.errors} error(s))`)}`,
+      );
+    }
+    if (checks.verify) {
+      const v = checks.verify as { valid: boolean; score: number };
+      console.log(
+        `  ${v.valid ? ICONS.success : ICONS.error} verify: ${chalk.bold(v.valid ? "pass" : "fail (insufficient cold-start context)")} (${v.score}/100)`,
+      );
+    }
+    if (checks.error) {
+      console.log(`  ${ICONS.error} ${chalk.red(checks.error as string)}`);
+    }
+
+    console.log("");
+    if (result.valid) {
+      console.log(`  ${ICONS.success} ${chalk.green.bold("All checks passed")}`);
+    } else {
+      console.log(`  ${ICONS.error} ${chalk.red.bold("One or more checks failed")}`);
+    }
+    process.exit(result.valid ? 0 : 1);
+  });
+
+// ── guidemd migrate ───────────────────────────────────────────────────────────
+program
+  .command("migrate [file]")
+  .description("Migrate GUIDE.md frontmatter to the current schema version")
+  .option("--force", "Overwrite even if already on the latest version")
+  .action(async (file: string = "GUIDE.md", opts: { force?: boolean }) => {
+    printBanner();
+
+    try {
+      const result = migrateGuide(file, { force: Boolean(opts.force), write: true });
+
+      if (!result.changed) {
+        console.log(
+          `  ${ICONS.success} ${chalk.green(
+            `Already on schema version ${result.version}. No changes needed.`,
+          )}`,
+        );
+        return;
+      }
+
+      console.log(`  ${ICONS.success} ${chalk.green("Migrated:")}`);
+      result.changes.forEach((c) => console.log(`    ${chalk.dim("•")} ${c}`));
+      console.log(`  ${ICONS.info} guide_version is now ${result.version}`);
+    } catch (e) {
+      console.log(`  ${ICONS.error} ${chalk.red(e instanceof Error ? e.message : String(e))}`);
+      process.exit(1);
+    }
+  });
+
+// ── guidemd completion ────────────────────────────────────────────────────────
+program
+  .command("completion [shell]")
+  .description("Generate shell completion scripts (bash, zsh, fish, powershell)")
+  .action((shell: CompletionShell = "bash") => {
+    const valid: CompletionShell[] = ["bash", "zsh", "fish", "powershell"];
+    if (!valid.includes(shell)) {
+      console.error(
+        `  ${ICONS.error} ${chalk.red(
+          `Unsupported shell: ${shell}. Supported: ${valid.join(", ")}`,
+        )}`,
+      );
+      process.exit(1);
+    }
+    try {
+      console.log(generateCompletion(shell));
+    } catch (e) {
+      console.error(
+        `  ${ICONS.error} ${chalk.red(
+          e instanceof Error ? e.message : String(e),
+        )}`,
+      );
+      process.exit(1);
+    }
+  });
 
 program.parse();
