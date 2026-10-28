@@ -538,16 +538,12 @@ export function importGuideFile(filePath: string): ImportResult {
       };
   }
   
-  // Add source comment to instructions
-  const sourceName = path.basename(resolved);
-  const instructionsWithHeader = `# Imported from ${sourceName}\n\n## AI Instructions\n\n${result.instructions}`;
-  
   // Build warnings
   const warnings: string[] = [];
   if (result.unmapped.length > 0) {
     warnings.push(...result.unmapped.map(u => `⚠ ${u}`));
   }
-  
+
   // Validate required fields
   if (!result.data.project) {
     warnings.push("⚠ Project name not found, using default");
@@ -555,7 +551,7 @@ export function importGuideFile(filePath: string): ImportResult {
   if (!result.data.language) {
     warnings.push("⚠ Language not detected, defaulting to 'typescript'");
   }
-  
+
   // Validate the imported data against the schema
   const validationResult = GuideMdSchema.safeParse(result.data);
   const schemaValid = validationResult.success;
@@ -563,12 +559,16 @@ export function importGuideFile(filePath: string): ImportResult {
     const schemaErrors = validationResult.error.errors.map(e => `${e.path.join('.')}: ${e.message}`);
     warnings.push(`⚠ Schema validation failed: ${schemaErrors.join(', ')}`);
   }
-  
+
+  // NOTE: `content` is the complete, unmodified source file. The parsed
+  // metadata (project, language, guardrails, …) goes into the frontmatter,
+  // but the body is never stripped or transformed — nothing the user wrote
+  // is silently dropped, so import → export round-trips losslessly.
   return {
     success: schemaValid, // Mark success=false when schema validation fails
     schemaValid,
     data: result.data as GuideMdFrontmatter,
-    content: instructionsWithHeader,
+    content,
     warnings,
     unmappedFields: result.unmapped,
   };

@@ -1,4 +1,5 @@
-import { SkillSchema, SkillFrontmatter } from "./schema.js";
+import { SkillSchema } from "./schema.js";
+import type { SkillFrontmatter } from "./schema.js";
 import { z } from "zod";
 import fs from "node:fs";
 import path from "node:path";
@@ -436,4 +437,5 @@ export function validateAllSkills(projectPath: string): SkillValidationResult[] 
 
 // ─── Export for CLI Integration ───────────────────────────────────────────────
 
-export { SkillSchema, SkillFrontmatter } from "./schema.js";
+export { SkillSchema } from "./schema.js";
+export type { SkillFrontmatter } from "./schema.js";
